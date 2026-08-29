@@ -12,7 +12,7 @@ import {
   updateMachineFile,
   writeMachineFile,
 } from './file-tools.js';
-import { readProcessOutput, startProcess, stopProcess } from './process-tools.js';
+import { readProcessOutput, startProcess, stopProcess, writeProcessInput } from './process-tools.js';
 import { createToolSpecs } from './tools.js';
 
 async function withRoot(prefix: string, body: (root: string) => Promise<void>): Promise<void> {
@@ -211,7 +211,7 @@ test('the tool registry validates arguments and reports its own surface', async 
   await withRoot('machine-mcp-registry-', async (root) => {
     const specs = createToolSpecs({ root, unrestricted: false, maxTimeoutMs: 60_000 });
     const byName = new Map(specs.map((spec) => [spec.name, spec]));
-    assert.equal(specs.length, 19);
+    assert.equal(specs.length, 35);
 
     await assert.rejects(
       byName.get('read_file')!.handler({}),
@@ -229,6 +229,24 @@ test('the tool registry validates arguments and reports its own surface', async 
     // The reported surface is derived from the registry, so it cannot drift.
     assert.deepEqual(status.tools, specs.map((spec) => spec.name));
     assert.ok(['ripgrep', 'builtin'].includes(status.available.searchEngine));
+  });
+});
+
+test('process_write sends input to a live managed process', async () => {
+  await withRoot('machine-mcp-stdin-', async (root) => {
+    const access = { root, unrestricted: false };
+    const started = await startProcess({
+      ...access,
+      command: "node -e \"process.stdin.once('data', d => { console.log('echo:' + d.toString().trim()); setTimeout(() => {}, 5000); })\"",
+    });
+    try {
+      const written = await writeProcessInput({ ...access, pid: started.pid, input: 'hello\\n' });
+      assert.ok(written.bytes > 0);
+      const output = await readProcessOutput({ ...access, pid: started.pid, waitMs: 5_000 });
+      assert.match(output.stdout, /echo:hello/);
+    } finally {
+      await stopProcess({ ...access, pid: started.pid });
+    }
   });
 });
 

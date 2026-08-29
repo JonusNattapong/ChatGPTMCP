@@ -3,5 +3,7 @@ dist/
 *.log
 .env
 .tunnel/
+.chatgpt-machine/
+docs-*.png
 tools/*.zip
 tools/tunnel-client-v*/

@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { Tool } from '@modelcontextprotocol/server';
+import { AuditLogger, defaultAuditPath } from './audit.js';
 import { ToolError } from './errors.js';
 import {
   editMachineFile,
@@ -20,19 +22,34 @@ import {
   readProcessOutput,
   startProcess,
   stopProcess,
+  writeProcessInput,
 } from './process-tools.js';
-import { gitDiff, gitStatus } from './git-tools.js';
+import {
+  gitAdd,
+  gitBranch,
+  gitCheckout,
+  gitCommit,
+  gitDiff,
+  gitLog,
+  gitPush,
+  gitShow,
+  gitStatus,
+} from './git-tools.js';
+import { diskInfo, environmentInfo, listPorts, listProcesses, networkInfo, systemInfo } from './system-tools.js';
 
 const execFileAsync = promisify(execFile);
 
 export interface ToolContext extends MachineAccess {
   maxTimeoutMs: number;
+  policyName?: string;
+  approvalMode?: string;
+  audit?: AuditLogger;
 }
 
 export interface ToolSpec {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: Tool['inputSchema'];
   annotations: {
     readOnlyHint: boolean;
     destructiveHint: boolean;
@@ -148,6 +165,7 @@ const EXPECTED_SHA256_PROPERTY = {
 export function createToolSpecs(context: ToolContext): ToolSpec[] {
   const access: MachineAccess = { root: context.root, unrestricted: context.unrestricted };
   const open = context.unrestricted;
+  const audit = context.audit ?? new AuditLogger(defaultAuditPath(context.root));
 
   const specs: ToolSpec[] = [
     {
@@ -177,10 +195,102 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
             // search_code still works without ripgrep, through a slower built-in scanner.
             searchEngine: ripgrep ? 'ripgrep' : 'builtin',
           },
-          managedProcesses: listManagedProcesses(),
+          governance: {
+            policy: context.policyName ?? 'admin',
+            approvalMode: context.approvalMode ?? 'mrtr',
+            auditFile: audit.filePath,
+          },
+          managedProcesses: await listManagedProcesses(access),
           tools: specs.map((spec) => spec.name),
         };
       },
+    },
+    {
+      name: 'system_info',
+      description: 'Read operating-system, CPU, memory, uptime, Node.js, and host identity information without invoking a shell.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async () => systemInfo(),
+    },
+    {
+      name: 'list_processes',
+      description: 'List operating-system processes with bounded structured results.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filter: { type: 'string', description: 'Optional case-insensitive text filter.' },
+          limit: { type: 'integer', minimum: 1, maximum: 2000, description: 'Maximum returned processes; defaults to 500.' },
+        },
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => listProcesses({ filter: optionalString(args, 'filter'), limit: optionalInteger(args, 'limit') }),
+    },
+    {
+      name: 'list_ports',
+      description: 'List local TCP/UDP endpoints and owning PIDs, optionally filtered by port, PID, or protocol.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: { type: 'integer', minimum: 1, maximum: 65535 },
+          pid: { type: 'integer', minimum: 1 },
+          protocol: { type: 'string', enum: ['tcp', 'udp'] },
+          limit: { type: 'integer', minimum: 1, maximum: 2000 },
+        },
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => {
+        const protocol = optionalString(args, 'protocol');
+        if (protocol !== undefined && protocol !== 'tcp' && protocol !== 'udp') throw new ToolError('INVALID_ARGUMENT', '"protocol" must be tcp or udp.');
+        return listPorts({ port: optionalInteger(args, 'port'), pid: optionalInteger(args, 'pid'), protocol, limit: optionalInteger(args, 'limit') });
+      },
+    },
+    {
+      name: 'environment_info',
+      description: 'List environment variable names and optionally non-sensitive values. Secret-like variables are always redacted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          include_values: { type: 'boolean', description: 'Include values for non-sensitive variables; defaults to false.' },
+          filter: { type: 'string', description: 'Optional variable-name filter.' },
+        },
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => environmentInfo({ includeValues: optionalBoolean(args, 'include_values'), filter: optionalString(args, 'filter') }),
+    },
+    {
+      name: 'disk_info',
+      description: 'Read filesystem capacity and free-space information for a path allowed by the current machine access policy.',
+      inputSchema: { type: 'object', properties: { path: PATH_PROPERTY } },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => diskInfo(access, optionalString(args, 'path')),
+    },
+    {
+      name: 'network_info',
+      description: 'Read local network-interface addresses and metadata without making an outbound network request.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async () => networkInfo(),
+    },
+    {
+      name: 'audit_recent',
+      description: 'Read recent redacted machine-operation audit records.',
+      inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 500 } } },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => ({ records: await audit.recent(optionalInteger(args, 'limit') ?? 50), path: audit.filePath }),
+    },
+    {
+      name: 'audit_search',
+      description: 'Search recent redacted audit records by text.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          limit: { type: 'integer', minimum: 1, maximum: 100 },
+        },
+        required: ['query'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => ({ records: await audit.search(requireString(args, 'query'), optionalInteger(args, 'limit') ?? 100), path: audit.filePath }),
     },
     {
       name: 'read_file',
@@ -498,6 +608,26 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       }),
     },
     {
+      name: 'process_write',
+      description: 'Write UTF-8 text to the standard input of a live process started by start_process. Recovered processes remain inspectable after restart but their stdin cannot be reattached.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pid: { type: 'integer', minimum: 1, description: 'Process ID returned by start_process.' },
+          input: { type: 'string', description: 'UTF-8 text to write to standard input.' },
+          end: { type: 'boolean', description: 'Close standard input after writing; defaults to false.' },
+        },
+        required: ['pid', 'input'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      handler: async (args) => writeProcessInput({
+        ...access,
+        pid: optionalInteger(args, 'pid') ?? Number.NaN,
+        input: requireText(args, 'input'),
+        end: optionalBoolean(args, 'end'),
+      }),
+    },
+    {
       name: 'stop_process',
       description: 'Stop a managed background process and its child tree by PID.',
       inputSchema: {
@@ -561,6 +691,107 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         contextLines: optionalInteger(args, 'context_lines'),
         maxBytes: optionalInteger(args, 'max_bytes'),
       }),
+    },
+    {
+      name: 'git_log',
+      description: 'Read structured Git commit history without shell interpolation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          max_count: { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum commits; defaults to 20.' },
+          ref: { type: 'string', description: 'Optional revision or branch; defaults to HEAD.' },
+        },
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => gitLog({ ...access, path: optionalString(args, 'path'), maxCount: optionalInteger(args, 'max_count'), ref: optionalString(args, 'ref') }),
+    },
+    {
+      name: 'git_show',
+      description: 'Read one Git revision and its patch or statistics with bounded output.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          ref: { type: 'string', description: 'Revision; defaults to HEAD.' },
+          stat_only: { type: 'boolean' },
+          max_bytes: { type: 'integer', minimum: 1024, maximum: 4194304 },
+        },
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => gitShow({ ...access, path: optionalString(args, 'path'), ref: optionalString(args, 'ref'), statOnly: optionalBoolean(args, 'stat_only'), maxBytes: optionalInteger(args, 'max_bytes') }),
+    },
+    {
+      name: 'git_branch',
+      description: 'List local Git branches and optionally remote branches with current/upstream metadata.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          all: { type: 'boolean', description: 'Include remote branches.' },
+        },
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => gitBranch({ ...access, path: optionalString(args, 'path'), all: optionalBoolean(args, 'all') }),
+    },
+    {
+      name: 'git_add',
+      description: 'Stage explicit repository paths using Git directly, without shell interpolation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          paths: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Repository paths to stage.' },
+        },
+        required: ['paths'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      handler: async (args) => gitAdd({ ...access, path: optionalString(args, 'path'), paths: optionalStringArray(args, 'paths') ?? [] }),
+    },
+    {
+      name: 'git_commit',
+      description: 'Create a local Git commit from staged changes, optionally staging tracked-file modifications with --all.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          message: { type: 'string', description: 'Commit message.' },
+          all: { type: 'boolean', description: 'Stage tracked-file modifications/deletions before committing.' },
+        },
+        required: ['message'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      handler: async (args) => gitCommit({ ...access, path: optionalString(args, 'path'), message: requireString(args, 'message'), all: optionalBoolean(args, 'all') }),
+    },
+    {
+      name: 'git_checkout',
+      description: 'Switch to an existing Git branch, or create and switch to a new branch. Force/discard modes are intentionally not exposed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          branch: { type: 'string' },
+          create: { type: 'boolean' },
+        },
+        required: ['branch'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      handler: async (args) => gitCheckout({ ...access, path: optionalString(args, 'path'), branch: requireString(args, 'branch'), create: optionalBoolean(args, 'create') }),
+    },
+    {
+      name: 'git_push',
+      description: 'Push a Git branch to a remote using Git directly. This is an external mutation and is approval-gated by the developer policy.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          remote: { type: 'string', description: 'Remote name; defaults to origin.' },
+          branch: { type: 'string', description: 'Branch; defaults to the current branch.' },
+          set_upstream: { type: 'boolean' },
+        },
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      handler: async (args) => gitPush({ ...access, path: optionalString(args, 'path'), remote: optionalString(args, 'remote'), branch: optionalString(args, 'branch'), setUpstream: optionalBoolean(args, 'set_upstream') }),
     },
   ];
 

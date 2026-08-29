@@ -6,7 +6,7 @@ Repository instructions for coding agents working in `ChatGPTMCP`.
 
 `chatgpt-machine-mcp` is a small local MCP server that intentionally exposes high-authority machine operations.
 
-Keep the implementation narrow. The public contract is nineteen tools:
+Keep the implementation narrow. The public contract is thirty-five tools:
 
 1. `machine_status`
 2. `read_file`
@@ -24,9 +24,25 @@ Keep the implementation narrow. The public contract is nineteen tools:
 14. `process_status`
 15. `read_process_output`
 16. `stop_process`
-17. `git_status`
-18. `git_diff`
-19. `apply_patch`
+17. `process_write`
+18. `git_status`
+19. `git_diff`
+20. `git_log`
+21. `git_show`
+22. `git_branch`
+23. `git_add`
+24. `git_commit`
+25. `git_checkout`
+26. `git_push`
+27. `system_info`
+28. `list_processes`
+29. `list_ports`
+30. `environment_info`
+31. `disk_info`
+32. `network_info`
+33. `audit_recent`
+34. `audit_search`
+35. `apply_patch`
 
 Do not introduce orchestration, planning, memory, agent delegation, or a generic task framework into this repository unless a concrete requirement demands it. This project is infrastructure plumbing, not an agent harness.
 
@@ -39,7 +55,7 @@ Treat these files as authoritative, in this order:
 3. `src/errors.ts` — `ToolError` and the stable `error.code` vocabulary.
 4. `src/file-tools.ts` — bounded file operations, directory walk, and structured code search.
 5. `src/shell-tools.ts` — path policy, shell execution, patch semantics.
-6. `scripts/*.ps1` — local Secure MCP Tunnel lifecycle.
+6. `scripts/*.ps1` and `scripts/*.sh` — local Secure MCP Tunnel lifecycle on Windows, macOS, Ubuntu, and WSL.
 7. tests — executable contract.
 8. `README.md` and `docs/*.svg` — human-facing description of the above.
 
@@ -77,7 +93,9 @@ The public MCP surface is deliberately small.
 - `machine_status` must remain read-only.
 - `read_file`, `list_directory`, `find_files`, `file_info`, `image_info`, and `search_code` are read-only.
 - `save_image_from_url` is destructive/open-world because it performs network I/O and writes a file.
-- `start_process` and `stop_process` are destructive; `process_status` and `read_process_output` are read-only.
+- `start_process`, `process_write`, and `stop_process` are destructive; `process_status` and `read_process_output` are read-only.
+- `git_status`, `git_diff`, `git_log`, `git_show`, and `git_branch` are read-only; Git mutations must remain policy-aware and approval-gated where configured.
+- `system_info`, `list_processes`, `list_ports`, `environment_info`, `disk_info`, `network_info`, `audit_recent`, and `audit_search` are read-only.
 - `write_file`, `edit_file`, and `update_file` are destructive but not open-world by annotation.
 - `shell_command` is destructive/open-world.
 - `apply_patch` is destructive but not open-world by annotation.

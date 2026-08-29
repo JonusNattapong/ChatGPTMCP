@@ -1,7 +1,7 @@
 {
   "name": "chatgpt-machine-mcp",
-  "version": "0.2.0",
-  "description": "Local MCP bridge that lets ChatGPT Web operate a machine and delegate work to Codex CLI",
+  "version": "0.3.0",
+  "description": "Local MCP bridge that lets trusted ChatGPT clients operate a machine through explicit MCP tools",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -22,9 +22,13 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0"
+    "@modelcontextprotocol/core": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@opentelemetry/api": "^1.9.1"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
   }

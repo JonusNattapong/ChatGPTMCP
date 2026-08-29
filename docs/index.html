@@ -116,7 +116,9 @@ stop_process(pid) -> stops the process tree</code></pre>
         <pre><code>.\scripts\start-tunnel.ps1
 .\scripts\status-tunnel.ps1
 .\scripts\stop-tunnel.ps1</code></pre>
-        <p>The runtime key belongs in <code>.tunnel\control-plane-api-key.dpapi</code>, which is ignored by Git. The launch script decrypts it only for the tunnel-client process and removes the plaintext environment variable afterward.</p>
+        <p>On Windows, the runtime key belongs in <code>.tunnel\control-plane-api-key.dpapi</code>, which is ignored by Git. The launch script decrypts it only for the tunnel-client process and removes the plaintext environment variable afterward.</p>
+        <h3>macOS, Ubuntu, and WSL</h3>
+        <p>The MCP server supports macOS, Ubuntu, and Ubuntu WSL with Bash as the default shell and POSIX process termination. Use <code>start-tunnel.sh</code>, <code>status-tunnel.sh</code>, and <code>stop-tunnel.sh</code>. macOS stores the runtime key in Keychain; Linux/WSL accepts <code>CONTROL_PLANE_API_KEY</code> or a local mode-600 key file. WSL controls its Linux environment, not arbitrary native Windows processes.</p>
       </section>
 
       <section id="development">

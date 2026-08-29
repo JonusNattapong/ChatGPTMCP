@@ -6,7 +6,7 @@ This README is the installation guide. For tools, architecture, transport, secur
 
 ## What you need
 
-- Windows 10/11
+- Windows 10/11 or macOS (Apple Silicon / Intel)
 - Node.js 20 or newer
 - Git
 - GitHub CLI (`gh`)
@@ -90,6 +90,46 @@ Test with:
 
 After changing MCP code: run `npm run build`, stop/start the tunnel, and refresh the connector so ChatGPT receives the latest tool schema.
 
+## macOS / Ubuntu / WSL setup
+
+The MCP server, file/process/Git tools, and tunnel lifecycle are supported on macOS, Ubuntu, and Ubuntu WSL. The Bash scripts use Keychain on macOS; Ubuntu/WSL use either `CONTROL_PLANE_API_KEY` for one launch or a local key file with mode `600`.
+
+```bash
+brew install node git gh
+git clone https://github.com/JonusNattapong/ChatGPTMCP.git
+cd ChatGPTMCP
+npm install && npm test
+
+# macOS: download darwin-arm64 on Apple Silicon, or darwin-amd64 on Intel.
+mkdir -p tools/tunnel-client-v0.0.13
+gh release download v0.0.13 --repo openai/tunnel-client --pattern "tunnel-client-v0.0.13-darwin-*.zip" --dir tools
+unzip tools/tunnel-client-v0.0.13-darwin-*.zip -d tools/tunnel-client-v0.0.13
+chmod +x tools/tunnel-client-v0.0.13/tunnel-client
+
+# Enter the OpenAI runtime key at the prompt; it is stored in your Keychain.
+security add-generic-password -U -a "$USER" -s chatgpt-machine-mcp-tunnel -w
+export OPENAI_TUNNEL_ID="tunnel_..."
+export OPENAI_ORGANIZATION_ID="org_..."
+./scripts/start-tunnel.sh
+./scripts/status-tunnel.sh
+```
+
+Use `./scripts/stop-tunnel.sh` to stop it. Download only the matching release archive for your architecture; do not extract both archives into the same directory.
+
+On Ubuntu or WSL, use the matching `linux-amd64` or `linux-arm64` archive instead. Store the key without committing it:
+
+```bash
+mkdir -p .tunnel
+umask 077
+printf '%s' "$CONTROL_PLANE_API_KEY" > .tunnel/control-plane-api-key
+chmod 600 .tunnel/control-plane-api-key
+export OPENAI_TUNNEL_ID="tunnel_..."
+export OPENAI_ORGANIZATION_ID="org_..."
+./scripts/start-tunnel.sh
+```
+
+WSL runs in a Linux boundary: its MCP can operate WSL files and Linux processes. Run the Windows setup above if ChatGPT must operate native Windows applications, Windows services, or the Windows filesystem outside mounted drive paths.
+
 ## Automatic startup
 
 The project does **not** start the tunnel automatically after Windows restarts. This is intentional because an active tunnel grants remote access with your Windows account's authority.
@@ -101,6 +141,8 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File D:\Projects\Github\ChatGPTMCP\
 ```
 
 Use **Run only when user is logged on** and **do not store a password**. Disable or delete that task when the machine should no longer be remotely reachable.
+
+On macOS, use a per-user LaunchAgent only if you explicitly want the same persistent remote access after login. It should execute `scripts/start-tunnel.sh` with `OPENAI_TUNNEL_ID` and `OPENAI_ORGANIZATION_ID` set in its environment; the runtime key remains in Keychain. Do not use a system-wide daemon for this user-scoped setup.
 
 ## Help
 

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { applyFilePatch, runShellCommand } from './shell-tools.js';
 import { processStatus, readProcessOutput, startProcess, stopProcess } from './process-tools.js';
-import { gitDiff, gitStatus } from './git-tools.js';
+import { gitAdd, gitBranch, gitCheckout, gitCommit, gitDiff, gitLog, gitShow, gitStatus } from './git-tools.js';
 
 test('safe mode keeps shell commands inside the configured root', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'machine-mcp-'));
@@ -113,20 +113,23 @@ test('apply_patch dry_run validates without writing files', async () => {
 
 test('process tools start, inspect output, and stop a background process', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'machine-mcp-process-'));
+  let pid: number | undefined;
   try {
     const started = await startProcess({
       root,
       unrestricted: false,
       command: "node -e \"console.log('process-ok'); setTimeout(() => {}, 10000)\"",
     });
+    pid = started.pid;
     assert.ok(started.pid > 0);
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    const output = await readProcessOutput({ root, unrestricted: false, pid: started.pid });
+    const output = await readProcessOutput({ root, unrestricted: false, pid: started.pid, waitMs: 5_000 });
     assert.match(output.stdout, /process-ok/);
     assert.equal((await processStatus({ root, unrestricted: false, pid: started.pid })).running, true);
     assert.equal((await stopProcess({ root, unrestricted: false, pid: started.pid })).stopped, true);
+    pid = undefined;
   } finally {
-    await rm(root, { recursive: true, force: true });
+    if (pid !== undefined) await stopProcess({ root, unrestricted: false, pid }).catch(() => undefined);
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -139,6 +142,37 @@ test('git tools return structured status and diff without shell interpolation', 
     assert.equal(status.files[0].path, 'tracked.txt');
     const diff = await gitDiff({ root, unrestricted: false, path: root });
     assert.match(diff.diff, /two/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('structured git write tools stage, commit, inspect, and switch branches', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'machine-mcp-git-write-'));
+  const machine = { root, unrestricted: false };
+  try {
+    await runShellCommand({
+      ...machine,
+      workdir: root,
+      command: 'git init -q; git config user.email test@example.com; git config user.name test; node -e "require(\'fs\').writeFileSync(\'tracked.txt\', \'one\\n\')"',
+    });
+
+    const staged = await gitAdd({ ...machine, path: root, paths: ['tracked.txt'] });
+    assert.equal(staged.status.summary.staged, 1);
+
+    const committed = await gitCommit({ ...machine, path: root, message: 'initial' });
+    assert.match(committed.commit, /^[a-f0-9]{40}$/);
+
+    const log = await gitLog({ ...machine, path: root, maxCount: 5 });
+    assert.equal(log.commits[0]?.subject, 'initial');
+
+    const shown = await gitShow({ ...machine, path: root, ref: 'HEAD', statOnly: true });
+    assert.match(shown.output, /initial/);
+
+    const switched = await gitCheckout({ ...machine, path: root, branch: 'feature/test', create: true });
+    assert.equal(switched.branch, 'feature/test');
+    const branches = await gitBranch({ ...machine, path: root });
+    assert.equal(branches.branches.find((branch) => branch.name === 'feature/test')?.current, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

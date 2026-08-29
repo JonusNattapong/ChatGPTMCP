@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { AuditLogger } from './audit.js';
+import { evaluatePolicy, loadPolicy } from './policy.js';
+import { environmentInfo, listPorts, listProcesses, networkInfo, systemInfo } from './system-tools.js';
+import { createToolSpecs } from './tools.js';
+
+async function withRoot(prefix: string, body: (root: string) => Promise<void>): Promise<void> {
+  const root = await mkdtemp(path.join(tmpdir(), prefix));
+  try {
+    await body(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test('readonly policy denies mutations and developer policy approval-gates high-authority tools', async () => {
+  await withRoot('machine-mcp-policy-', async (root) => {
+    const specs = createToolSpecs({ root, unrestricted: false, maxTimeoutMs: 60_000 });
+    const byName = new Map(specs.map((spec) => [spec.name, spec]));
+
+    const readonly = loadPolicy('readonly', root);
+    assert.equal(evaluatePolicy(readonly, byName.get('read_file')!, { path: 'a.txt' }, root).allowed, true);
+    assert.equal(evaluatePolicy(readonly, byName.get('write_file')!, { path: 'a.txt', content: 'x' }, root).allowed, false);
+    assert.equal(evaluatePolicy(readonly, byName.get('shell_command')!, { command: 'echo hi' }, root).allowed, false);
+
+    const developer = loadPolicy('developer', root);
+    const shell = evaluatePolicy(developer, byName.get('shell_command')!, { command: 'npm test', workdir: root }, root);
+    assert.equal(shell.allowed, true);
+    assert.equal(shell.requiresApproval, true);
+    assert.equal(evaluatePolicy(developer, byName.get('read_file')!, { path: 'README.md' }, root).requiresApproval, false);
+  });
+});
+
+test('custom policy file applies path and shell restrictions', async () => {
+  await withRoot('machine-mcp-custom-policy-', async (root) => {
+    const policyPath = path.join(root, 'policy.json');
+    await writeFile(policyPath, JSON.stringify({
+      extends: 'admin',
+      name: 'ci-safe',
+      filesystem: { write: ['allowed'], deny: ['allowed/private'] },
+      shell: { deny: ['Remove-Item', 'rm\\s+-rf'] },
+      network: { outbound: false },
+    }), 'utf8');
+    const policy = loadPolicy(policyPath, root);
+    const specs = createToolSpecs({ root, unrestricted: true, maxTimeoutMs: 60_000 });
+    const byName = new Map(specs.map((spec) => [spec.name, spec]));
+
+    assert.equal(evaluatePolicy(policy, byName.get('write_file')!, { path: path.join(root, 'allowed', 'x.txt'), content: 'x' }, root).allowed, true);
+    assert.equal(evaluatePolicy(policy, byName.get('write_file')!, { path: path.join(root, 'elsewhere', 'x.txt'), content: 'x' }, root).allowed, false);
+    assert.equal(evaluatePolicy(policy, byName.get('write_file')!, { path: path.join(root, 'allowed', 'private', 'x.txt'), content: 'x' }, root).allowed, false);
+    assert.equal(evaluatePolicy(policy, byName.get('shell_command')!, { command: 'Remove-Item x' }, root).allowed, false);
+    assert.equal(evaluatePolicy(policy, byName.get('git_push')!, { path: root }, root).allowed, false);
+  });
+});
+
+test('audit log redacts secrets and hashes large mutation payloads', async () => {
+  await withRoot('machine-mcp-audit-', async (root) => {
+    const logger = new AuditLogger(path.join(root, 'audit.ndjson'));
+    await logger.write({
+      traceId: 'trace-1',
+      tool: 'shell_command',
+      policy: 'admin',
+      decision: 'allowed',
+      status: 'success',
+      durationMs: 1,
+      args: {
+        command: 'deploy --token super-secret-value',
+        content: 'payload that should not be copied verbatim',
+        apiKey: 'another-secret',
+      },
+    });
+
+    const text = await readFile(logger.filePath, 'utf8');
+    assert.doesNotMatch(text, /super-secret-value/);
+    assert.doesNotMatch(text, /another-secret/);
+    assert.doesNotMatch(text, /payload that should not be copied verbatim/);
+    assert.match(text, /REDACTED/);
+    assert.match(text, /sha256:/);
+    assert.equal((await logger.recent(10)).length, 1);
+    assert.equal((await logger.search('shell_command')).length, 1);
+  });
+});
+
+test('system inspection tools return bounded structured information and redact secret-like env values', async () => {
+  const previous = process.env.MACHINE_MCP_TEST_TOKEN;
+  process.env.MACHINE_MCP_TEST_TOKEN = 'must-not-leak';
+  try {
+    const info = await systemInfo();
+    assert.equal(typeof info.hostname, 'string');
+    assert.ok(info.memory.totalBytes > 0);
+
+    const processes = await listProcesses({ limit: 5 });
+    assert.ok(processes.processes.length <= 5);
+
+    const ports = await listPorts({ limit: 5 });
+    assert.ok(ports.ports.length <= 5);
+
+    const environment = await environmentInfo({ includeValues: true, filter: 'MACHINE_MCP_TEST_TOKEN' });
+    assert.equal(environment.variables[0]?.value, '[REDACTED]');
+
+    const network = await networkInfo();
+    assert.ok(Array.isArray(network.interfaces));
+  } finally {
+    if (previous === undefined) delete process.env.MACHINE_MCP_TEST_TOKEN;
+    else process.env.MACHINE_MCP_TEST_TOKEN = previous;
+  }
+});
