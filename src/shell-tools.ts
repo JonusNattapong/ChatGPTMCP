@@ -94,11 +94,10 @@ export async function resolveMachinePath(
       throw new ToolError('NOT_A_DIRECTORY', `Path is not a directory: ${requestedPath}`);
     }
   }
-  // Canonicalize existing targets too. macOS exposes /var through /private/var,
-  // and Windows may surface the same path through an 8.3 alias (for example
-  // RUNNER~1). Comparing either spelling to a canonical root must not deny a
-  // valid path.
-  return await realpath(candidate).catch(() => candidate);
+  // `realExisting` is canonicalized above before the boundary check. This
+  // accepts macOS /var and Windows 8.3 aliases while preserving the caller's
+  // requested spelling as the returned working path.
+  return candidate;
 }
 
 function selectShell(shell: ShellKind): {
