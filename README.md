@@ -90,6 +90,17 @@ Test with:
 
 After changing MCP code: run `npm run build`, stop/start the tunnel, and refresh the connector so ChatGPT receives the latest tool schema.
 
+Useful local checks:
+
+```powershell
+node dist/index.js --doctor
+node dist/index.js --check
+# Preview all mutations without executing them:
+node dist/index.js --root D:\Projects\Github --dry-run
+```
+
+When using local HTTP transport, the redacted recent-call viewer is available at `http://127.0.0.1:8787/ui`. If `MCP_HTTP_TOKEN` is enabled, the UI endpoints require the same Bearer authorization header.
+
 ## macOS / Ubuntu / WSL setup
 
 The MCP server, file/process/Git tools, and tunnel lifecycle are supported on macOS, Ubuntu, and Ubuntu WSL. The Bash scripts use Keychain on macOS; Ubuntu/WSL use either `CONTROL_PLANE_API_KEY` for one launch or a local key file with mode `600`.

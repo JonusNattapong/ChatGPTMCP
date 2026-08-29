@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { AuditLogger } from './audit.js';
+import { AuditLogger, redactSecrets } from './audit.js';
+import { IdempotencyStore } from './idempotency.js';
 import { evaluatePolicy, loadPolicy } from './policy.js';
 import { environmentInfo, listPorts, listProcesses, networkInfo, systemInfo } from './system-tools.js';
 import { createToolSpecs } from './tools.js';
@@ -32,7 +33,17 @@ test('readonly policy denies mutations and developer policy approval-gates high-
     assert.equal(shell.allowed, true);
     assert.equal(shell.requiresApproval, true);
     assert.equal(evaluatePolicy(developer, byName.get('read_file')!, { path: 'README.md' }, root).requiresApproval, false);
+    assert.equal(evaluatePolicy(loadPolicy('admin', root), byName.get('read_file')!, { path: '.env' }, root).allowed, false);
+    assert.equal(evaluatePolicy(loadPolicy('admin', root), byName.get('read_file')!, { path: '.ssh/id_ed25519' }, root).allowed, false);
   });
+});
+
+test('idempotency rejects conflicting reuse and output redaction covers common credentials', () => {
+  const store = new IdempotencyStore();
+  store.store('request-123', 'write_file', { path: 'a.txt', content: 'one' }, { ok: true });
+  assert.deepEqual(store.lookup('request-123', 'write_file', { content: 'one', path: 'a.txt' }), { ok: true });
+  assert.throws(() => store.lookup('request-123', 'write_file', { path: 'a.txt', content: 'two' }), /different tool arguments/);
+  assert.equal(redactSecrets('token ghp_abcdefghijklmnopqrstuvwxyz123456'), 'token [REDACTED_SECRET]');
 });
 
 test('custom policy file applies path and shell restrictions', async () => {

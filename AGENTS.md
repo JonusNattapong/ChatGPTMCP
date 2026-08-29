@@ -98,6 +98,8 @@ The public MCP surface is deliberately small.
 - `system_info`, `list_processes`, `list_ports`, `environment_info`, `disk_info`, `network_info`, `audit_recent`, and `audit_search` are read-only.
 - `write_file`, `edit_file`, and `update_file` are destructive but not open-world by annotation.
 - `shell_command` is destructive/open-world.
+- `shell_command.on_timeout="background"` must preserve the process in the managed registry and return offsets usable by `read_process_output`.
+- `idempotency_key` is transport metadata accepted by every tool; identical retries return the cached response and conflicting reuse fails closed.
 - `apply_patch` is destructive but not open-world by annotation.
 - changing tool names or argument schemas is a breaking integration change.
 
@@ -139,6 +141,7 @@ Do not weaken this mode for convenience.
 ### Result envelope and errors
 
 - every tool result is `{ "ok": true, ... }` or `{ "ok": false, "tool", "error": { code, message, hint?, details? } }`, and a failure also sets MCP `isError`;
+- redact common credential formats before any result crosses the MCP transport, and always deny `.env`, `.ssh`, and private-key paths;
 - `error.code` values in `src/errors.ts` are a public contract; add codes rather than repurposing existing ones;
 - failures that a caller can act on should carry `hint` and the `details` needed to retry;
 - argument validation belongs in `src/tools.ts` and must reject a missing or mistyped argument instead of coercing it.
@@ -268,6 +271,6 @@ Usually out of scope:
 - job queues;
 - workflow engines;
 - model-provider abstractions;
-- UI/dashboard code.
+- product-scale UI/dashboard code. The bounded localhost-only `/ui` audit viewer is part of the HTTP transport diagnostics and must stay dependency-free.
 
 If those capabilities are needed, integrate this MCP server as a machine-access adapter from a higher-level system instead of turning this repository into that system.

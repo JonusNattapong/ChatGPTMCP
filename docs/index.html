@@ -61,7 +61,7 @@
       <section id="architecture">
         <div class="eyebrow">01 / Request path</div>
         <h2>One client call, consistent gates</h2>
-        <p>The server works through stdio or Streamable HTTP. A registry validates the tool name and arguments before the shared path policy, preconditions, and handler can touch the host.</p>
+        <p>The server works through stdio or Streamable HTTP. A registry validates the tool name and arguments before the shared path policy, preconditions, idempotency cache, and handler can touch the host. It also advertises prompts, resources, path completions, progress notifications, and compatibility logging.</p>
         <img class="diagram" src="architecture.svg" alt="MCP architecture diagram">
         <img class="diagram" src="request-flow.svg" alt="Request lifecycle diagram">
         <div class="callout">The tunnel is transport plumbing. The MCP server itself is not tied to a specific ChatGPT UI and can serve any compatible client.</div>
@@ -73,7 +73,7 @@
         <div class="grid">
           <article class="card"><strong>Inspect</strong> <code>machine_status</code>, <code>read_file</code>, <code>list_directory</code>, <code>find_files</code>, <code>file_info</code>, <code>image_info</code>, <code>search_code</code></article>
           <article class="card"><strong>Edit</strong> <code>write_file</code>, <code>edit_file</code>, <code>update_file</code>, <code>apply_patch</code></article>
-          <article class="card"><strong>Run</strong> <code>shell_command</code>, <code>start_process</code>, <code>process_status</code>, <code>read_process_output</code>, <code>stop_process</code></article>
+          <article class="card"><strong>Run</strong> <code>shell_command</code>, <code>start_process</code>, <code>process_status</code>, <code>read_process_output</code>, <code>stop_process</code>. A timed-out shell call can promote itself into the managed registry instead of losing the job.</article>
           <article class="card"><strong>Repository + image</strong> <code>git_status</code>, <code>git_diff</code>, <code>save_image_from_url</code></article>
         </div>
         <h3>Concurrency guard</h3>
@@ -101,7 +101,7 @@
         <div class="eyebrow">04 / Transport</div>
         <h2>Stdio for local clients; HTTP for the tunnel</h2>
         <pre><code>node dist/index.js --http --http-port 8787 --root D:\Projects\Github</code></pre>
-        <p>Health endpoints are <code>/healthz</code> and <code>/readyz</code>; MCP traffic is served at <code>/mcp</code>. Binding HTTP beyond loopback requires a bearer token.</p>
+        <p>Health endpoints are <code>/healthz</code> and <code>/readyz</code>; MCP traffic is served at <code>/mcp</code>. The dependency-free <code>/ui</code> page reads the last 50 redacted audit events from <code>/ui/audit</code>. Binding HTTP beyond loopback requires a bearer token, which also protects the UI endpoints.</p>
         <pre><code>node dist/index.js --http --http-host 0.0.0.0 --http-token "&lt;secret&gt;" --root D:\Projects\Github</code></pre>
       </section>
 
@@ -126,7 +126,7 @@ stop_process(pid) -> stops the process tree</code></pre>
         <h2>Change code and documentation together</h2>
         <pre><code>npm run build
 npm test</code></pre>
-        <p>The test suite covers path containment, file preconditions, code search, image validation, managed process lifecycle, Git inspection, tool discovery, and both stdio and HTTP behavior.</p>
+        <p>The test suite covers path containment, transactional edits, file preconditions, code search, image validation, timeout promotion, managed process lifecycle, Git inspection, MCP prompt/resource discovery, and stdio behavior. Use <code>--doctor</code> for dependency checks and <code>--dry-run</code> to suppress every mutating tool at the server gate.</p>
         <table><thead><tr><th>File</th><th>Responsibility</th></tr></thead><tbody>
           <tr><td><code>src/index.ts</code></td><td>CLI parsing, stdio/HTTP transports, response envelope.</td></tr>
           <tr><td><code>src/tools.ts</code></td><td>Tool registry, schemas, and handlers.</td></tr>

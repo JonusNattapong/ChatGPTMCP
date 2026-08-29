@@ -221,8 +221,12 @@ function createMcpServer(runtime: Runtime): Server {
     const progressToken = request.params._meta?.progressToken;
     if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 0, total: 1, message: `Starting ${name}` } });
     if (typeof key === 'string') {
-      const cached = idempotency.lookup(key, name, args);
-      if (cached !== undefined) return cached as ReturnType<typeof textResult>;
+      try {
+        const cached = idempotency.lookup(key, name, args);
+        if (cached !== undefined) return cached as ReturnType<typeof textResult>;
+      } catch (error: unknown) {
+        return errorResult(name, error);
+      }
     }
     return withToolSpan(name, {
       'mcp.tool.name': name,
@@ -309,7 +313,9 @@ function createMcpServer(runtime: Runtime): Server {
       } catch (error: unknown) {
         const described = describeError(error);
         await audit.write({ traceId, tool: name, policy: policy.name, decision: decision.requiresApproval ? 'approval_required' : 'allowed', status: 'error', durationMs: Date.now() - startedAt, args, errorCode: described.code });
-        return errorResult(name, error);
+        const response = errorResult(name, error);
+        if (typeof key === 'string') idempotency.store(key, name, args, response);
+        return response;
       }
     });
   });
@@ -390,7 +396,9 @@ async function main(): Promise<void> {
   if (options.http) {
     const handler = createMcpHandler(() => createMcpServer(runtime), {
       legacy: 'stateless',
-      responseMode: 'json',
+      // Start as JSON for ordinary calls and upgrade to SSE only when a tool
+      // emits progress/logging notifications before its terminal result.
+      responseMode: 'auto',
       onerror: (error) => console.error('[chatgpt-machine-mcp] MCP error:', error.message),
     });
     const handleMcpRequest = toNodeHandler(handler, {

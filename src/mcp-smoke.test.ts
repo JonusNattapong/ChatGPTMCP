@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -76,6 +76,15 @@ test('stdio MCP exposes and executes the machine tools', async () => {
     assert.equal(statusPayload.accessMode, 'UNRESTRICTED_MACHINE');
     assert.deepEqual(statusPayload.tools, listed.tools.map((tool) => tool.name));
 
+    const prompts = await client.listPrompts();
+    assert.equal(prompts.prompts[0]?.name, 'safe-edit-loop');
+    const prompt = await client.getPrompt({ name: 'safe-edit-loop', arguments: { path: 'src/index.ts' } });
+    assert.match(JSON.stringify(prompt), /expected_sha256/);
+    const resources = await client.listResources();
+    assert.equal(resources.resources[0]?.uri, 'workspace://status');
+    const resource = await client.readResource({ uri: 'workspace://status' });
+    assert.match(JSON.stringify(resource), /UNRESTRICTED_MACHINE/);
+
     // Failures answer with the same envelope and a stable machine-readable code.
     const missing = await client.callTool({ name: 'read_file', arguments: { path: 'no-such-file-here.txt' } });
     assert.equal(missing.isError, true);
@@ -97,6 +106,27 @@ test('stdio MCP exposes and executes the machine tools', async () => {
     });
     assert.equal(shell.isError, undefined, JSON.stringify(shell.content));
     assert.match(JSON.stringify(shell.content), /mcp-ok/);
+
+    const expectation = await client.callTool({ name: 'shell_command', arguments: { command: 'node -e "process.exit(0)"', expect_exit_code: 1, timeout_ms: 10_000 } });
+    assert.equal(expectation.isError, true);
+
+    const retryArgs = { path: 'retry.txt', content: 'once', idempotency_key: 'retry-request-123' };
+    const firstRetry = await client.callTool({ name: 'write_file', arguments: retryArgs });
+    const secondRetry = await client.callTool({ name: 'write_file', arguments: retryArgs });
+    assert.deepEqual(secondRetry, firstRetry);
+    const completion = await client.complete({ ref: { type: 'ref/prompt', name: 'safe-edit-loop' }, argument: { name: 'path', value: 'ret' } });
+    assert.ok(completion.completion.values.includes('retry.txt'));
+    const conflict = await client.callTool({ name: 'write_file', arguments: { ...retryArgs, content: 'different' } });
+    assert.equal(JSON.parse((conflict.content as Array<{ text: string }>)[0].text).error.code, 'IDEMPOTENCY_CONFLICT');
+
+    const protectedPath = await client.callTool({ name: 'read_file', arguments: { path: path.join(root, '.env') } });
+    assert.equal(JSON.parse((protectedPath.content as Array<{ text: string }>)[0].text).error.code, 'POLICY_DENIED');
+
+    const promoted = await client.callTool({ name: 'shell_command', arguments: { command: 'node -e "setTimeout(() => console.log(\'done\'), 1000)"', timeout_ms: 100, on_timeout: 'background' } });
+    const promotedPayload = JSON.parse((promoted.content as Array<{ text: string }>)[0].text);
+    assert.equal(promotedPayload.ok, true);
+    assert.equal(promotedPayload.promotedToBackground, true);
+    await client.callTool({ name: 'stop_process', arguments: { pid: promotedPayload.pid } });
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -150,4 +180,18 @@ test('MCP 2026-07-28 MRTR approval executes an approval-gated tool after elicita
     await client.close();
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
+});
+
+test('server-wide dry-run prevents mutation', async () => {
+  const distDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const root = await mkdtemp(path.join(tmpdir(), 'machine-mcp-server-dry-'));
+  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(distDirectory, 'index.js'), '--root', root, '--dry-run'], env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), stderr: 'pipe' });
+  const client = new Client({ name: 'dry-run-smoke', version: '0.3.0' }, { versionNegotiation: { mode: 'auto' } });
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({ name: 'write_file', arguments: { path: 'blocked.txt', content: 'nope' } });
+    const payload = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    assert.equal(payload.dryRun, true);
+    assert.equal(await access(path.join(root, 'blocked.txt')).then(() => true, () => false), false);
+  } finally { await client.close(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
