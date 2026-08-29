@@ -77,15 +77,6 @@ export async function resolveMachinePath(
     ? path.resolve(requestedPath)
     : path.resolve(resolvedRoot, requestedPath);
 
-  if (!accessConfig.unrestricted && !isWithin(resolvedRoot, candidate)) {
-    throw new ToolError(
-      'PATH_DENIED',
-      `Path is outside the configured root: ${requestedPath}`,
-      `This server runs in workspace-only mode. Use a path inside ${resolvedRoot}.`,
-      { root: resolvedRoot },
-    );
-  }
-
   const existing = await nearestExistingPath(candidate);
   const realExisting = await realpath(existing);
   if (!accessConfig.unrestricted && !isWithin(resolvedRoot, realExisting)) {
@@ -103,7 +94,11 @@ export async function resolveMachinePath(
       throw new ToolError('NOT_A_DIRECTORY', `Path is not a directory: ${requestedPath}`);
     }
   }
-  return candidate;
+  // Canonicalize existing targets too. macOS exposes /var through /private/var,
+  // and Windows may surface the same path through an 8.3 alias (for example
+  // RUNNER~1). Comparing either spelling to a canonical root must not deny a
+  // valid path.
+  return await realpath(candidate).catch(() => candidate);
 }
 
 function selectShell(shell: ShellKind): {
