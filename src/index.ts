@@ -4,6 +4,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
+import { readdir } from 'node:fs/promises';
 import {
   acceptedContent,
   createMcpHandler,
@@ -158,7 +159,7 @@ function createMcpServer(runtime: Runtime): Server {
   const server = new Server(
     { name: 'chatgpt-machine-mcp', version: '0.3.0' },
     {
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, prompts: { listChanged: false }, resources: { subscribe: false, listChanged: false }, completions: {}, logging: {} },
       cacheHints: {
         'tools/list': { ttlMs: 30_000, cacheScope: 'private' },
       },
@@ -176,6 +177,28 @@ function createMcpServer(runtime: Runtime): Server {
       annotations,
     })),
   }));
+
+  server.setRequestHandler('prompts/list', async () => ({ prompts: [{ name: 'safe-edit-loop', title: 'Safe edit loop', description: 'Read, hash, transactionally edit, then verify a workspace file.', arguments: [{ name: 'path', description: 'Workspace-relative file path', required: true }] }] }));
+  server.setRequestHandler('prompts/get', async (request) => {
+    if (request.params.name !== 'safe-edit-loop') throw new ToolError('NOT_FOUND', `Unknown prompt: ${request.params.name}`);
+    const target = request.params.arguments?.path ?? '<path>';
+    return { description: 'Optimistic-concurrency safe file editing workflow.', messages: [{ role: 'user', content: { type: 'text', text: `Use read_file on ${target}, retain sha256, call edit_file with expected_sha256 and edits[], then read_file again to verify.` } }] };
+  });
+  server.setRequestHandler('resources/list', async () => ({ resources: [{ uri: 'workspace://status', name: 'Workspace status', description: 'Current bridge workspace and governance status', mimeType: 'application/json' }] }));
+  server.setRequestHandler('resources/read', async (request) => {
+    if (request.params.uri !== 'workspace://status') throw new ToolError('NOT_FOUND', `Unknown resource: ${request.params.uri}`);
+    return { contents: [{ uri: 'workspace://status', mimeType: 'application/json', text: JSON.stringify({ root: options.root, accessMode: options.dangerouslyOpenMachine ? 'UNRESTRICTED_MACHINE' : 'WORKSPACE_ONLY', policy: policy.name, dryRun: options.dryRun }) }] };
+  });
+  server.setRequestHandler('completion/complete', async (request) => {
+    const prefix = request.params.argument.value.replace(/\\/g, '/');
+    const parent = path.dirname(prefix) === '.' ? '.' : path.dirname(prefix);
+    const base = path.basename(prefix).toLowerCase();
+    const directory = path.resolve(options.root, parent);
+    const relative = path.relative(options.root, directory);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return { completion: { values: [], total: 0, hasMore: false } };
+    const values = await readdir(directory, { withFileTypes: true }).then((entries) => entries.filter((entry) => entry.name.toLowerCase().startsWith(base) && !entry.name.startsWith('.')).slice(0, 100).map((entry) => `${parent === '.' ? '' : `${parent}/`}${entry.name}${entry.isDirectory() ? '/' : ''}`.replace(/\\/g, '/'))).catch(() => []);
+    return { completion: { values, total: values.length, hasMore: false } };
+  });
 
   server.setRequestHandler('tools/call', async (request, ctx) => {
     const name = request.params.name;
@@ -195,6 +218,8 @@ function createMcpServer(runtime: Runtime): Server {
     const key = suppliedArgs.idempotency_key;
     if (key !== undefined && (typeof key !== 'string' || key.length < 8 || key.length > 128)) return errorResult(name, new ToolError('INVALID_ARGUMENT', 'idempotency_key must be a string between 8 and 128 characters.'));
     const args = Object.fromEntries(Object.entries(suppliedArgs).filter(([arg]) => arg !== 'idempotency_key'));
+    const progressToken = request.params._meta?.progressToken;
+    if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 0, total: 1, message: `Starting ${name}` } });
     if (typeof key === 'string') {
       const cached = idempotency.lookup(key, name, args);
       if (cached !== undefined) return cached as ReturnType<typeof textResult>;
@@ -210,6 +235,7 @@ function createMcpServer(runtime: Runtime): Server {
         const response = successResult({ dryRun: true, tool: name, wouldExecute: true, message: 'Server dry-run mode prevented this mutation.' });
         await audit.write({ traceId, tool: name, policy: policy.name, decision: 'allowed', status: 'success', durationMs: Date.now() - startedAt, args });
         if (typeof key === 'string') idempotency.store(key, name, args, response);
+        if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 1, total: 1, message: `Completed ${name}` } });
         return response;
       }
       const decision = evaluatePolicy(policy, spec, args, options.root);
@@ -265,6 +291,7 @@ function createMcpServer(runtime: Runtime): Server {
       try {
         const result = await spec.handler(args);
         const failed = name === 'shell_command'
+          && (result as { promotedToBackground?: boolean }).promotedToBackground !== true
           && ((result as { expectationMet?: boolean }).expectationMet === false || (result as { exitCode?: number | null }).exitCode !== 0 || (result as { timedOut?: boolean }).timedOut === true);
         await audit.write({
           traceId,
@@ -315,6 +342,8 @@ function hasValidBearerToken(req: IncomingMessage, expectedToken?: string): bool
   const expected = Buffer.from(expectedToken);
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
+
+const AUDIT_UI = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5"><title>ChatGPT Machine MCP</title><style>body{font:14px ui-monospace,monospace;background:#101319;color:#dbe4f0;margin:2rem}h1{font:600 22px system-ui}table{width:100%;border-collapse:collapse}td,th{padding:.55rem;border-bottom:1px solid #293241;text-align:left}.success{color:#71d99e}.error{color:#ff7b86}</style></head><body><h1>ChatGPT Machine MCP · recent calls</h1><table><thead><tr><th>Time</th><th>Tool</th><th>Decision</th><th>Status</th><th>Duration</th></tr></thead><tbody id="rows"></tbody></table><script>fetch('/ui/audit').then(r=>r.json()).then(({records})=>{rows.innerHTML=records.reverse().map(x=>'<tr><td>'+x.timestamp+'</td><td>'+x.tool+'</td><td>'+x.decision+'</td><td class="'+x.status+'">'+x.status+'</td><td>'+x.durationMs+' ms</td></tr>').join('')}).catch(e=>rows.innerHTML='<tr><td colspan=5>'+e+'</td></tr>')</script></body></html>`;
 
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
@@ -385,6 +414,11 @@ async function main(): Promise<void> {
         }));
         return;
       }
+      if ((pathname === '/ui' || pathname === '/ui/audit') && !hasValidBearerToken(req, options.httpToken)) {
+        res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer' }); res.end(JSON.stringify({ error: 'Unauthorized' })); return;
+      }
+      if (pathname === '/ui' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(AUDIT_UI); return; }
+      if (pathname === '/ui/audit' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify({ records: await audit.recent(50) })); return; }
       if (pathname !== '/mcp') {
         res.writeHead(404, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: 'Not found' }));

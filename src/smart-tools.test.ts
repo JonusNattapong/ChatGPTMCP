@@ -125,6 +125,51 @@ test('edit_file enforces expected_replacements', async () => {
   });
 });
 
+test('edit_file accepts a transactional array of edits', async () => {
+  await withRoot('machine-mcp-txn-', async (root) => {
+    const access = { root, unrestricted: false };
+    await writeMachineFile({ ...access, filePath: 'multi.txt', content: 'alpha=1\nbeta=2\ngamma=3\n' });
+    const result = await editMachineFile({
+      ...access,
+      filePath: 'multi.txt',
+      edits: [
+        { oldText: 'alpha=1', newText: 'alpha=10' },
+        { oldText: 'beta=2', newText: 'beta=20' },
+        { oldText: 'gamma=3', newText: 'gamma=30' },
+      ],
+    } as any);
+    assert.equal(result.replacements, 3);
+    const content = await readFile(path.join(root, 'multi.txt'), 'utf8');
+    assert.equal(content, 'alpha=10\nbeta=20\ngamma=30\n');
+  });
+});
+
+test('edit_file rejects transactional array if any edit fails', async () => {
+  await withRoot('machine-mcp-txn-fail-', async (root) => {
+    const access = { root, unrestricted: false };
+    await writeMachineFile({ ...access, filePath: 't.txt', content: 'a\nb\nc\n' });
+    await assert.rejects(
+      editMachineFile({
+        ...access,
+        filePath: 't.txt',
+        edits: [
+          { oldText: 'a', newText: 'A' },
+          { oldText: 'notfound', newText: 'X' }, // This fails
+          { oldText: 'c', newText: 'C' },
+        ],
+      }),
+      (error: unknown) => {
+        const failure = toolError(error);
+        assert.equal(failure.code, 'NO_MATCH');
+        assert.equal(failure.details?.failedEditIndex, 1);
+        return true;
+      },
+    );
+    // File should remain unchanged
+    assert.equal(await readFile(path.join(root, 't.txt'), 'utf8'), 'a\nb\nc\n');
+  });
+});
+
 test('read_file can number the lines it returns', async () => {
   await withRoot('machine-mcp-numbers-', async (root) => {
     const access = { root, unrestricted: false };

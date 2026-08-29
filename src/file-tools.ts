@@ -60,12 +60,13 @@ export interface WriteFileOptions extends MachineAccess {
 
 export interface EditFileOptions extends MachineAccess {
   filePath: string;
-  oldText: string;
-  newText: string;
+  oldText?: string;
+  newText?: string;
   replaceAll?: boolean;
   expectedReplacements?: number;
   expectedSha256?: string;
   dryRun?: boolean;
+  edits?: TransactionalEdit[];
 }
 
 export interface TransactionalEdit {
@@ -565,8 +566,10 @@ function lineOfOffset(content: string, offset: number): number {
   return line;
 }
 
-export async function editMachineFile(options: EditFileOptions) {
+export async function editMachineFile(options: EditFileOptions): Promise<any> {
+  if (options.edits !== undefined) return editMachineFileTransaction({ ...options, edits: options.edits });
   if (!options.oldText) throw new ToolError('INVALID_ARGUMENT', '"old_text" must not be empty.');
+  if (options.newText === undefined) throw new ToolError('INVALID_ARGUMENT', '"new_text" is required.');
   if (options.expectedReplacements !== undefined) {
     validatePositiveInteger(options.expectedReplacements, 'expected_replacements', 10_000);
   }
@@ -603,7 +606,7 @@ export async function editMachineFile(options: EditFileOptions) {
           .reduce<{ offset: number; lines: number[] }>((state, segment) => {
             const offset = state.offset + segment.length;
             state.lines.push(lineOfOffset(file.content, offset));
-            return { offset: offset + options.oldText.length, lines: state.lines };
+            return { offset: offset + (options.oldText as string).length, lines: state.lines };
           }, { offset: 0, lines: [] }).lines,
       },
     );

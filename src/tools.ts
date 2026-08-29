@@ -547,12 +547,25 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables merged over the server environment.' },
           stdin: { type: 'string', description: 'Text written to the command standard input, which is then closed.' },
           expect_exit_code: { type: 'integer', description: 'Expected exit code; a different result is reported as an error.' },
+          on_timeout: { type: 'string', enum: ['terminate', 'background'], description: 'Terminate on timeout (default), or keep running as a managed background process.' },
         },
         required: ['command'],
       },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       handler: async (args) => {
         const expectedExitCode = optionalInteger(args, 'expect_exit_code');
+        const onTimeout = optionalString(args, 'on_timeout') ?? 'terminate';
+        if (!['terminate', 'background'].includes(onTimeout)) throw new ToolError('INVALID_ARGUMENT', '"on_timeout" must be terminate or background.');
+        if (onTimeout === 'background') {
+          const timeoutMs = typeof args.timeout_ms === 'number' ? args.timeout_ms : 30_000;
+          if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > context.maxTimeoutMs) throw new ToolError('INVALID_ARGUMENT', `"timeout_ms" must be between 100 and ${context.maxTimeoutMs}.`);
+          const started = await startProcess({ ...access, command: requireString(args, 'command'), workdir: optionalString(args, 'workdir'), shell: optionalShell(args), env: optionalStringRecord(args, 'env') });
+          const stdin = optionalString(args, 'stdin');
+          if (stdin !== undefined) await writeProcessInput({ ...access, pid: started.pid, input: stdin, end: true });
+          const output = await readProcessOutput({ ...access, pid: started.pid, waitMs: timeoutMs });
+          const base = { shell: started.shell, command: started.command, workdir: started.workdir, pid: started.pid, exitCode: output.exitCode, stdout: output.stdout, stderr: output.stderr, timedOut: output.running, outputTruncated: output.outputTruncated, promotedToBackground: output.running, nextStdoutOffset: output.nextStdoutOffset, nextStderrOffset: output.nextStderrOffset, hint: output.running ? 'Poll read_process_output with the returned offsets.' : undefined };
+          return expectedExitCode === undefined ? base : { ...base, expectedExitCode, expectationMet: output.exitCode === expectedExitCode };
+        }
         const result = await runShellCommand({
         ...access,
         command: requireString(args, 'command'),
