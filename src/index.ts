@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import {
@@ -39,6 +40,7 @@ interface Options {
   approvalMode: 'mrtr' | 'deny';
   auditFile?: string;
   check: boolean;
+  doctor: boolean;
 }
 
 interface Runtime {
@@ -68,6 +70,7 @@ export function parseOptions(args: string[]): Options {
     approvalMode: 'mrtr',
     auditFile: process.env.MCP_AUDIT_FILE,
     check: false,
+    doctor: false,
   };
 
   for (let index = 0; index < args.length; index++) {
@@ -83,6 +86,7 @@ export function parseOptions(args: string[]): Options {
     else if (arg === '--approval-mode') options.approvalMode = valueAfter(args, index++, arg) as Options['approvalMode'];
     else if (arg === '--audit-file') options.auditFile = valueAfter(args, index++, arg);
     else if (arg === '--check') options.check = true;
+    else if (arg === '--doctor') options.doctor = true;
     else if (arg === '--help' || arg === '-h') {
       process.stdout.write(`chatgpt-machine-mcp\n\n` +
         `  --root <path>                 Default workspace and safe-mode boundary\n` +
@@ -311,6 +315,12 @@ async function main(): Promise<void> {
     ttlSeconds: 5 * 60,
   });
   const runtime: Runtime = { options, policy, audit, approvalState, idempotency: new IdempotencyStore() };
+  if (options.doctor) {
+    const specs = createToolSpecs({ root: options.root, unrestricted: options.dangerouslyOpenMachine, maxTimeoutMs: options.maxTimeoutMs, policyName: policy.name, approvalMode: options.approvalMode, audit });
+    const checks = await Promise.all(['node', 'git', 'bash'].map(async (command) => ({ command, available: command === 'node' || await new Promise<boolean>((resolve) => { const probe = spawn(command, ['--version'], { stdio: 'ignore' }); probe.once('error', () => resolve(false)); probe.once('close', (code) => resolve(code === 0)); }) })));
+    process.stdout.write(JSON.stringify({ ok: checks.every((check) => check.available), root: options.root, checks, tools: specs.length, hint: 'Install missing dependencies, then rerun --doctor.' }, null, 2) + '\n');
+    return;
+  }
   if (options.check) {
     const specs = createToolSpecs({
       root: options.root,
