@@ -1,52 +1,211 @@
 # ChatGPT Machine MCP
 
-MCP bridge สำหรับให้ ChatGPT Web และ Codex ใช้ shell และแก้ไขไฟล์บนเครื่อง Windows เครื่องนี้ผ่าน OpenAI Secure MCP Tunnel
+Local MCP server for exposing controlled machine access to ChatGPT or any MCP-compatible client.
 
-ระบบที่ติดตั้งอยู่ใช้ workspace เริ่มต้น `D:\Projects\Github` และเปิดโหมด `UNRESTRICTED_MACHINE` จึงสามารถเข้าถึง path อื่นในเครื่องและรันคำสั่ง arbitrary shell ได้ตามสิทธิ์ของบัญชี Windows ปัจจุบัน
+The server exposes exactly three tools:
 
-## สถานะที่ติดตั้งแล้ว
+- `machine_status` — report platform, workspace root, access mode, and process ID.
+- `shell_command` — execute PowerShell, `cmd`, or Bash commands.
+- `apply_patch` — add, update, move, or delete files using Codex patch format.
 
-- MCP server: `D:\Projects\Github\ChatGPTMCP\dist\index.js`
-- Tunnel client: `tools\tunnel-client-v0.0.13\tunnel-client.exe`
-- Runtime alias: `chatgpt-machine`
-- Tunnel: `ChatGPT Machine MCP`
-- ChatGPT app/plugin: `ChatGPT Machine MCP` (Developer mode)
-- Codex MCP name: `chatgpt_machine`
-- Runtime key: เก็บแบบ Windows DPAPI ที่ `.tunnel\control-plane-api-key.dpapi`
+The project supports both stdio MCP and Streamable HTTP. On this machine it is also wired to OpenAI Secure MCP Tunnel through the helper scripts in `scripts/`.
 
-ไฟล์ DPAPI ถอดรหัสได้เฉพาะบัญชี Windows ที่สร้างไฟล์นี้บนเครื่องนี้ ไม่ควร commit หรือส่งไฟล์ดังกล่าวให้ผู้อื่น
+## Current local installation
 
-## เครื่องมือที่ ChatGPT และ Codex ใช้ได้
+| Item | Value |
+| --- | --- |
+| Project | `D:\Projects\Github\ChatGPTMCP` |
+| Default workspace | `D:\Projects\Github` |
+| Package | `chatgpt-machine-mcp@0.1.0` |
+| Node.js | `>=20` |
+| Tunnel runtime alias | `chatgpt-machine` |
+| Runtime profile | `chatgpt-machine-runtime` |
+| ChatGPT connector name | `ChatGPT Machine MCP` |
+| Codex MCP name | `chatgpt_machine` |
+| Tunnel client | `tools\tunnel-client-v0.0.13\tunnel-client.exe` |
 
-- `machine_status` — อ่าน platform, workspace และ access mode
-- `shell_command` — รัน PowerShell, cmd หรือ Bash
-- `apply_patch` — เพิ่ม แก้ ย้าย หรือลบไฟล์ด้วย Codex patch format
+The local tunnel launcher starts the MCP server with unrestricted machine access:
 
-ไม่มี tool `ask` และไม่มีการมอบงานให้ `codex exec` ตัว MCP ทำงานกับเครื่องโดยตรง
+```text
+node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine
+```
 
-## ใช้งานประจำวัน
+That mode is intentionally powerful. See [Security](#security) before reusing the configuration on another machine.
 
-เปิด PowerShell ที่โฟลเดอร์โปรเจกต์:
+## Quick start
+
+Install dependencies and verify the project:
 
 ```powershell
 cd D:\Projects\Github\ChatGPTMCP
+npm install
+npm test
 ```
 
-### เปิด Tunnel
+Run a configuration check without starting MCP:
+
+```powershell
+node dist\index.js --check --root D:\Projects\Github
+```
+
+Run stdio MCP in workspace-only mode:
+
+```powershell
+node dist\index.js --root D:\Projects\Github
+```
+
+Run stdio MCP with unrestricted machine access:
+
+```powershell
+node dist\index.js --root D:\Projects\Github --dangerously-open-machine
+```
+
+## Access modes
+
+### Workspace-only
+
+Workspace-only is the default.
+
+```powershell
+node dist\index.js --root D:\Projects\Github
+```
+
+In this mode:
+
+- working directories must resolve inside the configured root;
+- symlink or junction resolution is checked against the real root;
+- `apply_patch` is restricted to the configured root;
+- `machine_status` reports `WORKSPACE_ONLY`.
+
+### Unrestricted machine
+
+Enable with:
+
+```text
+--dangerously-open-machine
+```
+
+In this mode absolute paths and arbitrary shell commands can target locations outside `--root`. `machine_status` reports `UNRESTRICTED_MACHINE`.
+
+Use this only when the MCP client and tunnel are trusted to operate with the same authority as the Windows user running the process.
+
+## Tool contract
+
+### `machine_status`
+
+Read-only status endpoint.
+
+Example result:
+
+```json
+{
+  "ok": true,
+  "platform": "win32",
+  "defaultWorkspace": "D:\\Projects\\Github",
+  "accessMode": "UNRESTRICTED_MACHINE",
+  "pid": 12345
+}
+```
+
+### `shell_command`
+
+Input:
+
+```json
+{
+  "command": "git status --short",
+  "workdir": "D:\\Projects\\Github\\some-repo",
+  "shell": "powershell",
+  "timeout_ms": 30000
+}
+```
+
+Supported shells:
+
+- `auto` — PowerShell on Windows, Bash elsewhere;
+- `powershell`;
+- `cmd` — Windows only;
+- `bash`.
+
+Runtime constraints:
+
+- default command timeout: 30 seconds;
+- maximum command timeout: 10 minutes by default;
+- maximum combined stdout/stderr capture: 4 MiB;
+- non-zero exit codes and timeouts are returned to the MCP client as tool errors.
+
+The server does not contain a dedicated Codex delegation tool. If a client wants to run `codex`, it may do so explicitly through `shell_command` when policy allows it.
+
+### `apply_patch`
+
+Accepts Codex patch format:
+
+```text
+*** Begin Patch
+*** Update File: README.md
+@@
+-old line
++new line
+*** End Patch
+```
+
+Supported operations:
+
+- `*** Add File:`
+- `*** Update File:`
+- `*** Delete File:`
+- `*** Move to:` on an update operation
+
+The implementation prevents the same path from being claimed twice in a single patch and refuses moves onto existing destinations.
+
+## Streamable HTTP
+
+Run on loopback:
+
+```powershell
+node dist\index.js --http --http-port 8787 --root D:\Projects\Github
+```
+
+Endpoints:
+
+```text
+GET  /healthz
+GET  /readyz
+*    /mcp
+```
+
+Default bind address is `127.0.0.1:8787`.
+
+Binding outside loopback requires a bearer token:
+
+```powershell
+node dist\index.js `
+  --http `
+  --http-host 0.0.0.0 `
+  --http-port 8787 `
+  --http-token "<secret>" `
+  --root D:\Projects\Github
+```
+
+You can also set `MCP_HTTP_TOKEN` instead of passing the token on the command line. Bearer-token comparison uses `timingSafeEqual`.
+
+## Secure MCP Tunnel operations
+
+The checked-in helper scripts manage the local `tunnel-client` runtime.
+
+Start:
 
 ```powershell
 .\scripts\start-tunnel.ps1
 ```
 
-สคริปต์จะถอดรหัส runtime key จาก DPAPI เข้า environment ของ process ชั่วคราว เรียก `tunnel-client runtimes connect` และตรวจ `healthz`/`readyz` ให้ คีย์จะไม่ถูกพิมพ์ออกหน้าจอ
-
-### เช็กสถานะ
+Status:
 
 ```powershell
 .\scripts\status-tunnel.ps1
 ```
 
-พร้อมใช้งานเมื่อผลลัพธ์มีค่าต่อไปนี้:
+A healthy runtime should report values equivalent to:
 
 ```text
 process_running : True
@@ -55,164 +214,128 @@ ready           : True
 runtime_state   : ready
 ```
 
-หน้า runtime ภายในเครื่องดูได้ที่ URL `ui_url` จากผลลัพธ์ status โดยปัจจุบันมักเป็น `http://127.0.0.1:50988/ui`
-
-### ปิด Tunnel
+Stop:
 
 ```powershell
 .\scripts\stop-tunnel.ps1
 ```
 
-เมื่อปิดแล้ว ChatGPT Web จะยังเห็น plugin แต่เรียก tools ในเครื่องไม่ได้จนกว่าจะเปิด Tunnel ใหม่
-
-### หลังเปิดเครื่องหรือรีสตาร์ต Windows
-
-ระบบยังไม่ได้ตั้ง Windows auto-start ให้เปิด PowerShell แล้วรัน:
-
-```powershell
-cd D:\Projects\Github\ChatGPTMCP
-.\scripts\start-tunnel.ps1
-```
-
-## ใช้จาก ChatGPT Web
-
-1. เปิด [ChatGPT](https://chatgpt.com/) และเลือกโหมด **Work**
-2. กด **เพิ่มไฟล์และอื่นๆ**
-3. พิมพ์ค้นหา `ChatGPT Machine MCP` แล้วเลือก plugin
-4. พิมพ์งานที่ต้องการ เช่น:
+The runtime API key is stored locally in:
 
 ```text
-ใช้ machine_status ตรวจการเชื่อมต่อเท่านั้น
+.tunnel\control-plane-api-key.dpapi
 ```
+
+`start-tunnel.ps1` decrypts it only for the process launch, exposes it temporarily as `CONTROL_PLANE_API_KEY`, and removes the environment variable in `finally`.
+
+The `.tunnel/` directory is ignored by Git.
+
+## CLI options
 
 ```text
-ใช้ shell_command ตรวจ git status ที่ D:\Projects\Github\my-project ห้ามแก้ไฟล์
+--root <path>                 Default workspace and safe-mode boundary
+--dangerously-open-machine    Allow absolute paths and unrestricted shell/file access
+--max-timeout <ms>            Maximum tool timeout; default 600000
+--http                        Use Streamable HTTP instead of stdio
+--http-host <host>            HTTP bind host; default 127.0.0.1
+--http-port <port>            HTTP port; default 8787
+--http-token <token>          Optional bearer token; required off loopback
+--check                       Print configuration and exit
+-h, --help                    Show help
 ```
+
+## Architecture
 
 ```text
-ตรวจโปรเจกต์ D:\Projects\Github\my-project แล้วแก้ bug นี้ให้ พร้อมรันทดสอบ
+ChatGPT / MCP Client
+        |
+        | MCP
+        v
+chatgpt-machine-mcp
+  |-- machine_status
+  |-- shell_command
+  `-- apply_patch
+        |
+        v
+ Windows host filesystem / processes
 ```
 
-ChatGPT ตั้งสิทธิ์ plugin เป็น **อนุญาตคำสั่งที่เสี่ยงต่ำ** ตามค่าเริ่มต้น การใช้ `shell_command` หรือ `apply_patch` ที่มีความเสี่ยงอาจแสดงหน้าต่างให้ผู้ใช้ยืนยันก่อน
-
-## ใช้จาก Codex
-
-MCP ถูกเพิ่มไว้ใน Codex global config แล้ว ตรวจได้ด้วย:
-
-```powershell
-codex mcp get chatgpt_machine
-```
-
-Codex เรียก MCP นี้ผ่าน stdio โดยตรง จึงไม่จำเป็นต้องเปิด Secure Tunnel สำหรับการใช้จาก Codex เอง แต่ต้องมี build ใน `dist` ที่เป็นเวอร์ชันล่าสุด หากแก้ source ให้รัน `npm run build` แล้วเปิด task/Codex ใหม่เพื่อโหลด tools ใหม่
-
-## ติดตั้งหรือสร้างใหม่บนเครื่องอื่น
-
-ต้องมี Node.js 20 ขึ้นไป จากนั้นติดตั้งและ build:
-
-```powershell
-cd D:\Projects\Github\ChatGPTMCP
-npm install
-npm run build
-npm test
-```
-
-ตรวจ config ของ MCP:
-
-```powershell
-node dist\index.js --check --root D:\Projects\Github --dangerously-open-machine
-```
-
-จากนั้นต้องทำขั้นตอนที่ผูกกับบัญชีใหม่:
-
-1. สร้าง Secure MCP Tunnel ใน OpenAI Platform
-2. สร้าง runtime API key และเก็บแบบ DPAPI ห้ามใส่ plaintext ใน repo
-3. สร้าง tunnel-client profile ให้รัน MCP command นี้:
+For the ChatGPT Web deployment on this machine:
 
 ```text
-node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine
+ChatGPT Web
+    |
+OpenAI Secure MCP Tunnel
+    |
+tunnel-client runtime
+    |
+stdio MCP
+    |
+chatgpt-machine-mcp
+    |
+Windows host
 ```
 
-4. รัน `tunnel-client doctor` และยืนยันว่า dependency checks ผ่าน
-5. เปิด Developer mode ใน ChatGPT Web
-6. สร้าง plugin แบบ Connection = Tunnel, Authentication = None แล้วเชื่อม plugin
-7. ยืนยันว่า ChatGPT สแกนพบทั้งสาม tools และทดสอบ `machine_status`
-8. เพิ่ม local stdio MCP ใน Codex หากต้องการใช้ MCP ตัวเดียวกันจาก Codex
-
-อย่าคัดลอก tunnel ID, organization ID, workspace ID หรือ key จากเครื่องนี้ไปใช้กับบัญชีอื่นโดยไม่ตรวจสอบเจ้าของและ scope ใหม่
-
-## พัฒนาและทดสอบ MCP
-
-ติดตั้ง dependency และ build:
-
-```powershell
-npm install
-npm run build
-```
-
-รันทดสอบทั้งหมด:
-
-```powershell
-npm test
-```
-
-รัน stdio MCP แบบจำกัดอยู่ใต้ root:
-
-```powershell
-node dist\index.js --root D:\Projects\Github
-```
-
-รัน stdio MCP แบบเปิดทั้งเครื่อง:
-
-```powershell
-node dist\index.js --root D:\Projects\Github --dangerously-open-machine
-```
-
-ทดสอบ Streamable HTTP เฉพาะ loopback:
-
-```powershell
-node dist\index.js --http --http-port 8787 --root D:\Projects\Github --dangerously-open-machine
-Invoke-RestMethod http://127.0.0.1:8787/healthz
-```
-
-หาก bind ออกจาก loopback ต้องตั้ง `--http-token` หรือ `MCP_HTTP_TOKEN` เสมอ ห้ามเปิดพอร์ต MCP ที่ไม่มี authentication สู่อินเทอร์เน็ต
-
-## แก้ปัญหา
-
-### ChatGPT เห็น plugin แต่เรียก tool ไม่ได้
-
-```powershell
-.\scripts\status-tunnel.ps1
-.\scripts\start-tunnel.ps1
-```
-
-ถ้ายังไม่พร้อม ให้ตรวจละเอียด:
-
-```powershell
-.\tools\tunnel-client-v0.0.13\tunnel-client.exe doctor `
-  --profile chatgpt-machine-runtime `
-  --profile-dir "$env:APPDATA\tunnel-client" `
-  --explain
-```
-
-### แก้ source แล้ว ChatGPT ยังใช้ behavior เดิม
-
-```powershell
-npm test
-.\scripts\stop-tunnel.ps1
-.\scripts\start-tunnel.ps1
-```
-
-จากนั้นเปิดรายละเอียด plugin ใน ChatGPT แล้วกด **รีเฟรช** เพื่อสแกน tool schema ใหม่
-
-### ต้องการตัดสิทธิ์ทันที
-
-รัน `.\scripts\stop-tunnel.ps1` เพื่อตัดเส้นทางจาก ChatGPT Web และกด **ตัดการเชื่อมต่อ** ในหน้า plugin หากต้องการเพิกถอนการเชื่อมต่อระดับบัญชีด้วย
+The tunnel transport and the MCP server are separate components. The MCP server itself has no dependency on a specific ChatGPT UI.
 
 ## Security
 
-- ผู้ที่สั่งงาน plugin นี้ได้อาจมีสิทธิ์เทียบเท่าบัญชี Windows ปัจจุบัน
-- อย่าใส่ API key, token หรือ password ใน prompt, log, source code หรือ README
-- `.tunnel\` ถูก ignore จาก Git แล้ว
-- ตรวจ path และคำสั่งก่อนอนุมัติ action ที่เป็น destructive
-- ใช้ Secure MCP Tunnel เท่านั้นสำหรับ ChatGPT Web และไม่ควรเปิด local MCP port สู่ public internet
-- หากสงสัยว่าคีย์รั่ว ให้ revoke/rotate key ใน OpenAI Platform แล้วสร้างไฟล์ DPAPI ใหม่
+This project is an administrative bridge, not a sandbox.
+
+Important boundaries:
+
+- `--dangerously-open-machine` grants the MCP client filesystem and shell reach equivalent to the current Windows account.
+- `shell_command` is marked destructive and open-world in MCP annotations.
+- `apply_patch` is marked destructive.
+- workspace-only mode defends against simple path traversal and real-path escapes, but it should still be treated as a local execution boundary rather than a hostile multi-tenant sandbox.
+- HTTP binding outside loopback is rejected unless a bearer token is configured.
+- never commit runtime keys, access tokens, passwords, or decrypted DPAPI material.
+- keep `.tunnel/` local and ignored.
+- rotate/revoke the tunnel runtime key if the machine or account is suspected to be compromised.
+
+For normal development, prefer workspace-only mode. Use unrestricted mode only when remote machine administration is the intended capability.
+
+## Development
+
+Build:
+
+```powershell
+npm run build
+```
+
+Test:
+
+```powershell
+npm test
+```
+
+The current tests cover:
+
+- safe-mode path containment;
+- unrestricted absolute working directories;
+- add/update patch behavior;
+- stdio MCP tool discovery;
+- execution of `machine_status` and `shell_command` through an MCP client.
+
+Source layout:
+
+```text
+src/
+  index.ts              MCP server, CLI parsing, stdio/HTTP transports
+  shell-tools.ts        path policy, shell execution, patch engine
+  mcp-smoke.test.ts     stdio MCP integration test
+  shell-tools.test.ts   shell/path/patch unit tests
+scripts/
+  start-tunnel.ps1
+  status-tunnel.ps1
+  stop-tunnel.ps1
+tools/
+  tunnel-client-v0.0.13/
+```
+
+## Documentation map
+
+- `README.md` — operator and developer reference.
+- `AGENTS.md` — repository rules for coding agents working on this project.
+
+When runtime behavior changes, update the documentation in the same change. In particular, keep tool schemas, access-mode semantics, CLI options, tunnel scripts, and security boundaries synchronized with the implementation.
