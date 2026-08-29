@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import type { Tool } from '@modelcontextprotocol/server';
 import { AuditLogger, defaultAuditPath } from './audit.js';
@@ -172,15 +174,20 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
     {
       name: 'machine_status',
       description: 'Report the access mode, workspace root, platform, available external tools (git, ripgrep, shells), and the background processes this session manages. Call this first when unsure what the bridge can do.',
-      inputSchema: { type: 'object', properties: {} },
+      inputSchema: { type: 'object', properties: { include: { type: 'array', items: { type: 'string', enum: ['git', 'project'] }, description: 'Optional bootstrap sections.' } } },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      handler: async () => {
+      handler: async (args) => {
         const [git, ripgrep, bash, powershell] = await Promise.all([
           probeVersion('git', ['--version']),
           probeVersion('rg', ['--version']),
           probeVersion('bash', ['--version']),
           probeVersion(process.platform === 'win32' ? 'powershell.exe' : 'pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']),
         ]);
+        const include = optionalStringArray(args, 'include') ?? [];
+        const project = include.includes('project') ? await readFile(path.join(context.root, 'package.json'), 'utf8').then((text) => {
+          const pkg = JSON.parse(text) as { name?: string; scripts?: Record<string, string> };
+          return { name: pkg.name, scripts: Object.fromEntries(Object.entries(pkg.scripts ?? {}).filter(([name]) => ['dev', 'test', 'build', 'lint', 'start'].includes(name))) };
+        }).catch(() => undefined) : undefined;
         return {
           platform: process.platform,
           defaultWorkspace: context.root,
@@ -203,6 +210,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           },
           managedProcesses: await listManagedProcesses(access),
           tools: specs.map((spec) => spec.name),
+          project,
         };
       },
     },
@@ -538,11 +546,14 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           max_output_bytes: { type: 'number', description: 'Maximum combined stdout/stderr bytes (1024-4194304).' },
           env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables merged over the server environment.' },
           stdin: { type: 'string', description: 'Text written to the command standard input, which is then closed.' },
+          expect_exit_code: { type: 'integer', description: 'Expected exit code; a different result is reported as an error.' },
         },
         required: ['command'],
       },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
-      handler: async (args) => runShellCommand({
+      handler: async (args) => {
+        const expectedExitCode = optionalInteger(args, 'expect_exit_code');
+        const result = await runShellCommand({
         ...access,
         command: requireString(args, 'command'),
         workdir: optionalString(args, 'workdir'),
@@ -552,7 +563,9 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         maxOutputBytes: typeof args.max_output_bytes === 'number' ? args.max_output_bytes : undefined,
         env: optionalStringRecord(args, 'env'),
         stdin: optionalString(args, 'stdin'),
-      }),
+        });
+        return expectedExitCode === undefined ? result : { ...result, expectedExitCode, expectationMet: result.exitCode === expectedExitCode };
+      },
     },
     {
       name: 'start_process',

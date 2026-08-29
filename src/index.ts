@@ -251,7 +251,7 @@ function createMcpServer(runtime: Runtime): Server {
       try {
         const result = await spec.handler(args);
         const failed = name === 'shell_command'
-          && ((result as { exitCode?: number | null }).exitCode !== 0 || (result as { timedOut?: boolean }).timedOut === true);
+          && ((result as { expectationMet?: boolean }).expectationMet === false || (result as { exitCode?: number | null }).exitCode !== 0 || (result as { timedOut?: boolean }).timedOut === true);
         await audit.write({
           traceId,
           tool: name,
