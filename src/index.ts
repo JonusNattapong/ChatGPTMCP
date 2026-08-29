@@ -41,6 +41,7 @@ interface Options {
   auditFile?: string;
   check: boolean;
   doctor: boolean;
+  dryRun: boolean;
 }
 
 interface Runtime {
@@ -71,6 +72,7 @@ export function parseOptions(args: string[]): Options {
     auditFile: process.env.MCP_AUDIT_FILE,
     check: false,
     doctor: false,
+    dryRun: false,
   };
 
   for (let index = 0; index < args.length; index++) {
@@ -87,6 +89,7 @@ export function parseOptions(args: string[]): Options {
     else if (arg === '--audit-file') options.auditFile = valueAfter(args, index++, arg);
     else if (arg === '--check') options.check = true;
     else if (arg === '--doctor') options.doctor = true;
+    else if (arg === '--dry-run') options.dryRun = true;
     else if (arg === '--help' || arg === '-h') {
       process.stdout.write(`chatgpt-machine-mcp\n\n` +
         `  --root <path>                 Default workspace and safe-mode boundary\n` +
@@ -99,7 +102,8 @@ export function parseOptions(args: string[]): Options {
         `  --policy <profile|file>       admin (default), developer, readonly, or a JSON policy file\n` +
         `  --approval-mode <mode>        mrtr (default) or deny when a policy requires approval\n` +
         `  --audit-file <path>           NDJSON audit log (default: <root>/.chatgpt-machine/audit.ndjson)\n` +
-        `  --check                       Print configuration and the tool list, then exit\n`);
+        `  --check                       Print configuration and the tool list, then exit\n` +
+        `  --dry-run                     Refuse mutations and report their simulated status\n`);
       process.exit(0);
     } else {
       throw new Error(`Unknown option: ${arg}`);
@@ -202,6 +206,12 @@ function createMcpServer(runtime: Runtime): Server {
       'mcp.policy.name': policy.name,
     }, async (traceId) => {
       const startedAt = Date.now();
+      if (options.dryRun && !spec.annotations.readOnlyHint) {
+        const response = successResult({ dryRun: true, tool: name, wouldExecute: true, message: 'Server dry-run mode prevented this mutation.' });
+        await audit.write({ traceId, tool: name, policy: policy.name, decision: 'allowed', status: 'success', durationMs: Date.now() - startedAt, args });
+        if (typeof key === 'string') idempotency.store(key, name, args, response);
+        return response;
+      }
       const decision = evaluatePolicy(policy, spec, args, options.root);
       if (!decision.allowed) {
         const error = new ToolError('POLICY_DENIED', decision.reason ?? `Tool ${name} was denied by policy.`);
@@ -339,6 +349,7 @@ async function main(): Promise<void> {
       policy: policy.name,
       approvalMode: options.approvalMode,
       auditFile: audit.filePath,
+      dryRun: options.dryRun,
       tools: specs.map((spec) => spec.name),
     }, null, 2) + '\n');
     return;
