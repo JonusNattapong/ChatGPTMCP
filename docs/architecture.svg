@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 820" width="920" height="820" role="img" aria-label="chatgpt-machine-mcp architecture: MCP clients reach the server over stdio or Streamable HTTP, index.ts wraps every result in a shared envelope, tools.ts holds the tool registry, four tool modules run behind a single path policy, and errors.ts supplies the shared error codes.">
+  <title>chatgpt-machine-mcp architecture</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .bg   { fill: #f8fafc; }
+      .box  { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .t    { font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; fill: #0f172a; }
+      .h    { font-size: 13px; font-weight: 600; }
+      .s    { font-size: 10.5px; fill: #475569; }
+      .tag  { font-size: 10px; font-weight: 600; letter-spacing: .06em; }
+      .line { stroke: #64748b; stroke-width: 1.4; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="920" height="820"/>
+
+  <text class="t" x="24" y="40" font-size="20" font-weight="700">chatgpt-machine-mcp — architecture</text>
+  <text class="t s" x="24" y="62">19 MCP tools over stdio or Streamable HTTP, behind one registry, one path policy, and one result envelope.</text>
+
+  <!-- clients -->
+  <text class="t tag" x="24" y="88" fill="#475569">CLIENTS</text>
+  <g>
+    <rect class="box" x="24" y="96" width="280" height="56" rx="10"/>
+    <text class="t h" x="40" y="120">ChatGPT Web</text>
+    <text class="t s" x="40" y="138">connector via OpenAI Secure MCP Tunnel</text>
+
+    <rect class="box" x="320" y="96" width="280" height="56" rx="10"/>
+    <text class="t h" x="336" y="120">Codex CLI</text>
+    <text class="t s" x="336" y="138">MCP server name: chatgpt_machine</text>
+
+    <rect class="box" x="616" y="96" width="280" height="56" rx="10"/>
+    <text class="t h" x="632" y="120">Any MCP client</text>
+    <text class="t s" x="632" y="138">tools/list · tools/call</text>
+  </g>
+
+  <!-- any client may use either transport, so the three feed one bus -->
+  <path d="M 164 152 L 164 170 M 460 152 L 460 170 M 756 152 L 756 170 M 164 170 L 756 170" fill="none" stroke="#64748b" stroke-width="1.4"/>
+  <line class="line" x1="238" y1="170" x2="238" y2="184"/>
+  <line class="line" x1="682" y1="170" x2="682" y2="184"/>
+
+  <!-- transports -->
+  <text class="t tag" x="24" y="176" fill="#475569">TRANSPORT</text>
+  <g>
+    <rect class="box" x="24" y="184" width="428" height="66" rx="10" stroke="#94a3b8"/>
+    <text class="mono h" x="40" y="208">stdio</text>
+    <text class="t s" x="40" y="226">tunnel-client runtime spawns node dist/index.js</text>
+    <text class="t s" x="40" y="241">default transport; no port is opened</text>
+
+    <rect class="box" x="468" y="184" width="428" height="66" rx="10" stroke="#94a3b8"/>
+    <text class="mono h" x="484" y="208">Streamable HTTP  /mcp</text>
+    <text class="t s" x="484" y="226">binds 127.0.0.1:8787 by default · GET /healthz /readyz</text>
+    <text class="t s" x="484" y="241">off loopback a bearer token is required (timingSafeEqual)</text>
+  </g>
+
+  <line class="line" x1="238" y1="250" x2="238" y2="284"/>
+  <line class="line" x1="682" y1="250" x2="682" y2="284"/>
+
+  <!-- index.ts -->
+  <g>
+    <rect class="box" x="24" y="286" width="872" height="74" rx="10"/>
+    <text class="mono h" x="40" y="310">src/index.ts</text>
+    <text class="t s" x="40" y="328">CLI options (--root, --dangerously-open-machine, --http, --check) · transport wiring · bearer authentication</text>
+    <text class="t s" x="40" y="345">wraps every handler result in the shared envelope, and sets MCP isError on failure</text>
+    <rect x="620" y="298" width="262" height="48" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text class="mono" x="632" y="316" font-size="10" fill="#0f172a">{ "ok": true, ... }</text>
+    <text class="mono" x="632" y="333" font-size="10" fill="#b91c1c">{ "ok": false, "error": { "code" ... } }</text>
+  </g>
+
+  <line class="line" x1="460" y1="360" x2="460" y2="392"/>
+
+  <!-- registry -->
+  <g>
+    <rect class="box" x="24" y="394" width="872" height="76" rx="10" stroke="#2563eb" stroke-width="2"/>
+    <text class="mono h" x="40" y="418" fill="#1d4ed8">src/tools.ts — tool registry</text>
+    <text class="t s" x="40" y="436">one spec per tool: name · JSON Schema · MCP annotations · argument validation · handler</text>
+    <text class="t s" x="40" y="453">argument coercion rejects a missing or mistyped value instead of silently defaulting it</text>
+    <rect x="596" y="406" width="286" height="50" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text class="t" x="608" y="424" font-size="10" fill="#1e40af">machine_status and --check derive the tool</text>
+    <text class="t" x="608" y="440" font-size="10" fill="#1e40af">list from this array, so it cannot drift</text>
+  </g>
+
+  <line class="line" x1="127" y1="470" x2="127" y2="502"/>
+  <line class="line" x1="349" y1="470" x2="349" y2="502"/>
+  <line class="line" x1="571" y1="470" x2="571" y2="502"/>
+  <line class="line" x1="793" y1="470" x2="793" y2="502"/>
+
+  <!-- tool modules -->
+  <text class="t tag" x="24" y="496" fill="#475569">TOOL MODULES</text>
+  <g>
+    <rect class="box" x="24" y="504" width="206" height="96" rx="10"/>
+    <text class="mono" x="38" y="524" font-size="11.5" font-weight="600">file-tools.ts</text>
+    <text class="t s" x="38" y="542">read · write · edit · update</text>
+    <text class="t s" x="38" y="558">list_directory · find_files</text>
+    <text class="t s" x="38" y="574">search_code (rg or builtin)</text>
+    <text class="t s" x="38" y="590">image_info · save_image_from_url</text>
+
+    <rect class="box" x="246" y="504" width="206" height="96" rx="10"/>
+    <text class="mono" x="260" y="524" font-size="11.5" font-weight="600">shell-tools.ts</text>
+    <text class="t s" x="260" y="542">resolveMachinePath (policy)</text>
+    <text class="t s" x="260" y="558">shell_command · env · stdin</text>
+    <text class="t s" x="260" y="574">timeout and output caps</text>
+    <text class="t s" x="260" y="590">apply_patch (Codex format)</text>
+
+    <rect class="box" x="468" y="504" width="206" height="96" rx="10"/>
+    <text class="mono" x="482" y="524" font-size="11.5" font-weight="600">process-tools.ts</text>
+    <text class="t s" x="482" y="542">start · status · stop</text>
+    <text class="t s" x="482" y="558">incremental output offsets</text>
+    <text class="t s" x="482" y="574">wait_ms instead of polling</text>
+    <text class="t s" x="482" y="590">session-local PID registry</text>
+
+    <rect class="box" x="690" y="504" width="206" height="96" rx="10"/>
+    <text class="mono" x="704" y="524" font-size="11.5" font-weight="600">git-tools.ts</text>
+    <text class="t s" x="704" y="542">git_status: branch, upstream,</text>
+    <text class="t s" x="704" y="558">ahead/behind, file summary</text>
+    <text class="t s" x="704" y="574">git_diff: staged, paths filter,</text>
+    <text class="t s" x="704" y="590">context_lines, byte cap</text>
+  </g>
+
+  <line class="line" x1="460" y1="600" x2="460" y2="626"/>
+
+  <!-- path policy -->
+  <g>
+    <rect x="24" y="628" width="872" height="52" rx="10" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text class="t h" x="40" y="650" fill="#92400e">path policy — every path passes through resolveMachinePath</text>
+    <text class="t s" x="40" y="668" fill="#92400e">WORKSPACE_ONLY: resolved path and its realpath must stay inside --root (blocks traversal and symlink escapes) · UNRESTRICTED_MACHINE: absolute paths anywhere</text>
+  </g>
+
+  <line class="line" x1="460" y1="680" x2="460" y2="708"/>
+
+  <!-- host -->
+  <text class="t tag" x="24" y="702" fill="#475569">HOST</text>
+  <g>
+    <rect class="box" x="24" y="710" width="206" height="52" rx="10" stroke="#a78bfa"/>
+    <text class="t h" x="38" y="732" fill="#5b21b6">Filesystem</text>
+    <text class="t s" x="38" y="750">UTF-8 text files, metadata, hashes</text>
+
+    <rect class="box" x="246" y="710" width="206" height="52" rx="10" stroke="#a78bfa"/>
+    <text class="t h" x="260" y="732" fill="#5b21b6">Shells</text>
+    <text class="t s" x="260" y="750">powershell · cmd (Windows) · bash</text>
+
+    <rect class="box" x="468" y="710" width="206" height="52" rx="10" stroke="#a78bfa"/>
+    <text class="t h" x="482" y="732" fill="#5b21b6">Processes</text>
+    <text class="t s" x="482" y="750">background trees, killed on stop</text>
+
+    <rect class="box" x="690" y="710" width="206" height="52" rx="10" stroke="#a78bfa"/>
+    <text class="t h" x="704" y="732" fill="#5b21b6">git · rg · HTTPS</text>
+    <text class="t s" x="704" y="750">probed and reported by machine_status</text>
+  </g>
+
+  <!-- errors band -->
+  <g>
+    <rect x="24" y="776" width="872" height="30" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text class="mono" x="40" y="795" font-size="11" font-weight="600" fill="#b91c1c">src/errors.ts</text>
+    <text class="t" x="126" y="795" font-size="10.5" fill="#7f1d1d">ToolError(code, message, hint, details) — thrown by every module above, rendered by index.ts into the failure envelope. Codes are a public contract.</text>
+  </g>
+</svg>

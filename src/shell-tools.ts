@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { access, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { ToolError } from './errors.js';
 
 export type ShellKind = 'auto' | 'bash' | 'powershell' | 'cmd';
 
@@ -18,6 +19,8 @@ export interface ShellCommandOptions extends MachineAccess {
   timeoutMs?: number;
   maxTimeoutMs?: number;
   maxOutputBytes?: number;
+  env?: Record<string, string>;
+  stdin?: string;
 }
 
 export interface ShellCommandResult {
@@ -29,6 +32,7 @@ export interface ShellCommandResult {
   timedOut: boolean;
   outputTruncated: boolean;
   durationMs: number;
+  command: string;
 }
 
 interface PatchOperation {
@@ -55,7 +59,9 @@ async function nearestExistingPath(candidate: string): Promise<string> {
       return current;
     } catch {
       const parent = path.dirname(current);
-      if (parent === current) throw new Error(`Cannot resolve an existing parent for: ${candidate}`);
+      if (parent === current) {
+        throw new ToolError('NOT_FOUND', `Cannot resolve an existing parent for: ${candidate}`);
+      }
       current = parent;
     }
   }
@@ -72,18 +78,30 @@ export async function resolveMachinePath(
     : path.resolve(resolvedRoot, requestedPath);
 
   if (!accessConfig.unrestricted && !isWithin(resolvedRoot, candidate)) {
-    throw new Error(`Path is outside the configured root: ${requestedPath}`);
+    throw new ToolError(
+      'PATH_DENIED',
+      `Path is outside the configured root: ${requestedPath}`,
+      `This server runs in workspace-only mode. Use a path inside ${resolvedRoot}.`,
+      { root: resolvedRoot },
+    );
   }
 
   const existing = await nearestExistingPath(candidate);
   const realExisting = await realpath(existing);
   if (!accessConfig.unrestricted && !isWithin(resolvedRoot, realExisting)) {
-    throw new Error(`Path resolves outside the configured root: ${requestedPath}`);
+    throw new ToolError(
+      'PATH_DENIED',
+      `Path resolves outside the configured root: ${requestedPath}`,
+      'A symbolic link in this path escapes the workspace root.',
+      { root: resolvedRoot },
+    );
   }
 
   if (mustBeDirectory) {
     const info = await stat(candidate);
-    if (!info.isDirectory()) throw new Error(`Working directory is not a directory: ${requestedPath}`);
+    if (!info.isDirectory()) {
+      throw new ToolError('NOT_A_DIRECTORY', `Path is not a directory: ${requestedPath}`);
+    }
   }
   return candidate;
 }
@@ -102,7 +120,9 @@ function selectShell(shell: ShellKind): {
     };
   }
   if (selected === 'cmd') {
-    if (process.platform !== 'win32') throw new Error('The cmd shell is only available on Windows.');
+    if (process.platform !== 'win32') {
+      throw new ToolError('INVALID_ARGUMENT', 'The cmd shell is only available on Windows.', 'Use "bash" or "auto" on this platform.');
+    }
     return { kind: selected, executable: 'cmd.exe', args: ['/d', '/s', '/c'] };
   }
   return { kind: selected, executable: 'bash', args: ['-lc'] };
@@ -135,20 +155,20 @@ async function terminateProcessTree(child: import('node:child_process').ChildPro
 }
 
 export async function runShellCommand(options: ShellCommandOptions): Promise<ShellCommandResult> {
-  if (!options.command.trim()) throw new Error('"command" parameter is required.');
+  if (!options.command.trim()) throw new ToolError('INVALID_ARGUMENT', '"command" parameter is required.');
   if (options.shell && !['auto', 'bash', 'powershell', 'cmd'].includes(options.shell)) {
-    throw new Error('"shell" must be one of: auto, bash, powershell, cmd.');
+    throw new ToolError('INVALID_ARGUMENT', '"shell" must be one of: auto, bash, powershell, cmd.');
   }
 
   const maxTimeoutMs = options.maxTimeoutMs ?? DEFAULT_MAX_TIMEOUT_MS;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > maxTimeoutMs) {
-    throw new Error(`"timeout_ms" must be between 100 and ${maxTimeoutMs}.`);
+    throw new ToolError('INVALID_ARGUMENT', `"timeout_ms" must be between 100 and ${maxTimeoutMs}.`);
   }
 
   const maxOutputBytes = options.maxOutputBytes ?? MAX_OUTPUT_BYTES;
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > MAX_OUTPUT_BYTES) {
-    throw new Error(`"max_output_bytes" must be an integer between 1024 and ${MAX_OUTPUT_BYTES}.`);
+    throw new ToolError('INVALID_ARGUMENT', `"max_output_bytes" must be an integer between 1024 and ${MAX_OUTPUT_BYTES}.`);
   }
 
   const workdir = await resolveMachinePath(options, options.workdir || '.', true);
@@ -157,11 +177,16 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
   return await new Promise<ShellCommandResult>((resolve, reject) => {
     const child = spawn(shell.executable, [...shell.args, options.command], {
       cwd: workdir,
-      env: process.env,
+      env: options.env ? { ...process.env, ...options.env } : process.env,
       windowsHide: true,
       detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
+    if (options.stdin !== undefined) {
+      // A command that exits before draining stdin closes the pipe; that is not a tool failure.
+      child.stdin?.on('error', () => {});
+      child.stdin?.end(options.stdin, 'utf8');
+    }
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
     const startedAt = Date.now();
@@ -185,13 +210,17 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
       }
     };
 
-    child.stdout.on('data', (chunk: Buffer) => append('stdout', chunk));
-    child.stderr.on('data', (chunk: Buffer) => append('stderr', chunk));
+    child.stdout?.on('data', (chunk: Buffer) => append('stdout', chunk));
+    child.stderr?.on('data', (chunk: Buffer) => append('stderr', chunk));
     child.on('error', (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new Error(`Unable to start ${shell.kind}: ${error.message}`));
+      reject(new ToolError(
+        'DEPENDENCY_MISSING',
+        `Unable to start ${shell.kind}: ${error.message}`,
+        `Confirm that ${shell.executable} exists on PATH, or choose another "shell".`,
+      ));
     });
 
     const timer = setTimeout(() => {
@@ -210,6 +239,7 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
       }
       resolve({
         shell: shell.kind,
+        command: options.command,
         workdir,
         exitCode,
         stdout,
@@ -224,14 +254,22 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
 
 function parsePatch(patchText: string): PatchOperation[] {
   const lines = patchText.replace(/\r\n/g, '\n').split('\n');
-  if (lines[0] !== '*** Begin Patch') throw new Error('Patch must start with "*** Begin Patch".');
+  if (lines[0] !== '*** Begin Patch') {
+    throw new ToolError('PATCH_INVALID', 'Patch must start with "*** Begin Patch".');
+  }
 
   const operations: PatchOperation[] = [];
   let index = 1;
   while (index < lines.length && lines[index] !== '*** End Patch') {
     const header = lines[index++];
     const match = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(header);
-    if (!match) throw new Error(`Invalid patch operation header: ${header}`);
+    if (!match) {
+      throw new ToolError(
+        'PATCH_INVALID',
+        `Invalid patch operation header: ${header}`,
+        'Headers must read "*** Add File: <path>", "*** Update File: <path>", or "*** Delete File: <path>".',
+      );
+    }
 
     const operation: PatchOperation = {
       kind: match[1].toLowerCase() as PatchOperation['kind'],
@@ -253,8 +291,10 @@ function parsePatch(patchText: string): PatchOperation[] {
     operations.push(operation);
   }
 
-  if (lines[index] !== '*** End Patch') throw new Error('Patch must end with "*** End Patch".');
-  if (operations.length === 0) throw new Error('Patch contains no file operations.');
+  if (lines[index] !== '*** End Patch') {
+    throw new ToolError('PATCH_INVALID', 'Patch must end with "*** End Patch".');
+  }
+  if (operations.length === 0) throw new ToolError('PATCH_INVALID', 'Patch contains no file operations.');
   return operations;
 }
 
@@ -281,7 +321,7 @@ function applyUpdate(original: string, patchLines: string[], filePath: string): 
         index++;
         continue;
       }
-      throw new Error(`Expected "@@" hunk header while updating ${filePath}.`);
+      throw new ToolError('PATCH_INVALID', `Expected "@@" hunk header while updating ${filePath}.`);
     }
     sawHunk = true;
     index++;
@@ -290,7 +330,11 @@ function applyUpdate(original: string, patchLines: string[], filePath: string): 
     while (index < patchLines.length && !patchLines[index].startsWith('@@')) {
       const line = patchLines[index++];
       if (!line || ![' ', '+', '-'].includes(line[0])) {
-        throw new Error(`Invalid hunk line while updating ${filePath}: ${line}`);
+        throw new ToolError(
+          'PATCH_INVALID',
+          `Invalid hunk line while updating ${filePath}: ${line}`,
+          'Every hunk line must begin with a space, "+", or "-".',
+        );
       }
       const content = line.slice(1);
       if (line[0] !== '+') oldLines.push(content);
@@ -299,12 +343,18 @@ function applyUpdate(original: string, patchLines: string[], filePath: string): 
 
     let matchAt = findSequence(fileLines, oldLines, cursor);
     if (matchAt < 0) matchAt = findSequence(fileLines, oldLines, 0);
-    if (matchAt < 0) throw new Error(`Could not find patch context in ${filePath}.`);
+    if (matchAt < 0) {
+      throw new ToolError(
+        'NO_MATCH',
+        `Could not find patch context in ${filePath}.`,
+        'Re-read the file and rebuild the hunk from its current contents.',
+      );
+    }
     fileLines.splice(matchAt, oldLines.length, ...newLines);
     cursor = matchAt + newLines.length;
   }
 
-  if (!sawHunk) throw new Error(`Update for ${filePath} contains no hunks.`);
+  if (!sawHunk) throw new ToolError('PATCH_INVALID', `Update for ${filePath} contains no hunks.`);
   return fileLines.join(eol) + (trailingNewline ? eol : '');
 }
 
@@ -320,13 +370,15 @@ export async function applyFilePatch(accessConfig: MachineAccess, patchText: str
       : undefined;
     for (const claimedPath of [source, destination].filter((value): value is string => Boolean(value))) {
       const key = process.platform === 'win32' ? claimedPath.toLowerCase() : claimedPath;
-      if (claimedPaths.has(key)) throw new Error(`A patch may only operate on each path once: ${claimedPath}`);
+      if (claimedPaths.has(key)) {
+        throw new ToolError('PATCH_INVALID', `A patch may only operate on each path once: ${claimedPath}`);
+      }
       claimedPaths.add(key);
     }
     if (destination) {
       try {
         await access(destination);
-        throw new Error(`Cannot move file because the destination already exists: ${operation.moveTo}`);
+        throw new ToolError('ALREADY_EXISTS', `Cannot move file because the destination already exists: ${operation.moveTo}`);
       } catch (error: unknown) {
         if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
       }
@@ -334,12 +386,16 @@ export async function applyFilePatch(accessConfig: MachineAccess, patchText: str
     if (operation.kind === 'add') {
       try {
         await access(source);
-        throw new Error(`Cannot add file because it already exists: ${operation.filePath}`);
+        throw new ToolError(
+          'ALREADY_EXISTS',
+          `Cannot add file because it already exists: ${operation.filePath}`,
+          'Use an "*** Update File" operation instead.',
+        );
       } catch (error: unknown) {
         if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
       }
       if (operation.lines.some((line) => !line.startsWith('+'))) {
-        throw new Error(`Every content line for an added file must start with "+": ${operation.filePath}`);
+        throw new ToolError('PATCH_INVALID', `Every content line for an added file must start with "+": ${operation.filePath}`);
       }
       prepared.push({
         ...operation,
@@ -352,7 +408,7 @@ export async function applyFilePatch(accessConfig: MachineAccess, patchText: str
     const original = await readFile(source, 'utf8');
     if (operation.kind === 'delete') {
       if (operation.lines.some((line) => line !== '')) {
-        throw new Error(`Delete operation must not contain content: ${operation.filePath}`);
+        throw new ToolError('PATCH_INVALID', `Delete operation must not contain content: ${operation.filePath}`);
       }
       prepared.push({ ...operation, source });
     } else {

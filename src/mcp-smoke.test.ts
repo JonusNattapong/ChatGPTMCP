@@ -49,7 +49,21 @@ test('stdio MCP exposes and executes the machine tools', async () => {
 
     const status = await client.callTool({ name: 'machine_status', arguments: {} });
     assert.equal(status.isError, undefined);
-    assert.match(JSON.stringify(status.content), /UNRESTRICTED_MACHINE/);
+    const statusPayload = JSON.parse((status.content as Array<{ text: string }>)[0].text);
+    assert.equal(statusPayload.ok, true);
+    assert.equal(statusPayload.accessMode, 'UNRESTRICTED_MACHINE');
+    assert.deepEqual(statusPayload.tools, listed.tools.map((tool) => tool.name));
+
+    // Failures answer with the same envelope and a stable machine-readable code.
+    const missing = await client.callTool({ name: 'read_file', arguments: { path: 'no-such-file-here.txt' } });
+    assert.equal(missing.isError, true);
+    const missingPayload = JSON.parse((missing.content as Array<{ text: string }>)[0].text);
+    assert.equal(missingPayload.ok, false);
+    assert.equal(missingPayload.error.code, 'NOT_FOUND');
+
+    const unknown = await client.callTool({ name: 'not_a_tool', arguments: {} });
+    assert.equal(unknown.isError, true);
+    assert.equal(JSON.parse((unknown.content as Array<{ text: string }>)[0].text).error.code, 'UNKNOWN_TOOL');
 
     const shell = await client.callTool({
       name: 'shell_command',
