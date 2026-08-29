@@ -157,7 +157,7 @@ function createMcpServer(runtime: Runtime): Server {
   });
   const byName = new Map<string, ToolSpec>(specs.map((spec) => [spec.name, spec]));
   const server = new Server(
-    { name: 'chatgpt-machine-mcp', version: '0.3.0' },
+    { name: 'chatgpt-machine-mcp', version: '0.4.0' },
     {
       capabilities: { tools: {}, prompts: { listChanged: false }, resources: { subscribe: true, listChanged: false }, completions: {}, logging: {} },
       cacheHints: {
