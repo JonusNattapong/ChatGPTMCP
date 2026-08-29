@@ -28,6 +28,7 @@ import { evaluatePolicy, loadPolicy, type PolicyConfig } from './policy.js';
 import { withToolSpan } from './telemetry.js';
 import { createToolSpecs, type ToolSpec } from './tools.js';
 import { IdempotencyStore } from './idempotency.js';
+import type { BrowserAccess } from './browser-tools.js';
 
 interface Options {
   root: string;
@@ -43,6 +44,12 @@ interface Options {
   check: boolean;
   doctor: boolean;
   dryRun: boolean;
+  enableBrowser: boolean;
+  browserPort: number;
+  browserHeadless: boolean;
+  browserExecutable?: string;
+  browserProfileDir?: string;
+  browserAllowOrigins: string[];
 }
 
 interface Runtime {
@@ -74,6 +81,10 @@ export function parseOptions(args: string[]): Options {
     check: false,
     doctor: false,
     dryRun: false,
+    enableBrowser: false,
+    browserPort: 9331,
+    browserHeadless: true,
+    browserAllowOrigins: [],
   };
 
   for (let index = 0; index < args.length; index++) {
@@ -91,6 +102,12 @@ export function parseOptions(args: string[]): Options {
     else if (arg === '--check') options.check = true;
     else if (arg === '--doctor') options.doctor = true;
     else if (arg === '--dry-run') options.dryRun = true;
+    else if (arg === '--enable-browser') options.enableBrowser = true;
+    else if (arg === '--browser-port') options.browserPort = Number(valueAfter(args, index++, arg));
+    else if (arg === '--browser-headed') options.browserHeadless = false;
+    else if (arg === '--browser-executable') options.browserExecutable = valueAfter(args, index++, arg);
+    else if (arg === '--browser-profile-dir') options.browserProfileDir = valueAfter(args, index++, arg);
+    else if (arg === '--browser-allow-origin') options.browserAllowOrigins.push(valueAfter(args, index++, arg));
     else if (arg === '--help' || arg === '-h') {
       process.stdout.write(`chatgpt-machine-mcp\n\n` +
         `  --root <path>                 Default workspace and safe-mode boundary\n` +
@@ -104,7 +121,13 @@ export function parseOptions(args: string[]): Options {
         `  --approval-mode <mode>        mrtr (default) or deny when a policy requires approval\n` +
         `  --audit-file <path>           NDJSON audit log (default: <root>/.chatgpt-machine/audit.ndjson)\n` +
         `  --check                       Print configuration and the tool list, then exit\n` +
-        `  --dry-run                     Refuse mutations and report their simulated status\n`);
+        `  --dry-run                     Refuse mutations and report their simulated status\n` +
+        `  --enable-browser              Advertise browser_* tools backed by an isolated Chrome/Edge profile\n` +
+        `  --browser-port <port>         DevTools port for the managed browser (default: 9331)\n` +
+        `  --browser-headed              Launch the browser with a visible window instead of headless\n` +
+        `  --browser-executable <path>   Chrome/Edge executable to launch instead of auto-detection\n` +
+        `  --browser-profile-dir <path>  Isolated profile directory (default: <root>/.chatgpt-machine/browser-profile)\n` +
+        `  --browser-allow-origin <host> Allowed navigation hostname; repeatable (default: localhost, 127.0.0.1)\n`);
       process.exit(0);
     } else {
       throw new Error(`Unknown option: ${arg}`);
@@ -123,7 +146,23 @@ export function parseOptions(args: string[]): Options {
   if (options.http && !['127.0.0.1', 'localhost', '::1'].includes(options.httpHost) && !options.httpToken) {
     throw new Error('HTTP binding outside loopback requires --http-token or MCP_HTTP_TOKEN.');
   }
+  if (!Number.isInteger(options.browserPort) || options.browserPort < 1 || options.browserPort > 65_535) {
+    throw new Error('--browser-port must be an integer between 1 and 65535.');
+  }
+  if (options.browserAllowOrigins.length === 0) options.browserAllowOrigins = ['localhost', '127.0.0.1'];
+  if (options.browserProfileDir) options.browserProfileDir = path.resolve(options.root, options.browserProfileDir);
   return options;
+}
+
+function browserAccessFrom(options: Options): BrowserAccess | undefined {
+  if (!options.enableBrowser) return undefined;
+  return {
+    port: options.browserPort,
+    headless: options.browserHeadless,
+    profileDir: options.browserProfileDir ?? path.join(options.root, '.chatgpt-machine', 'browser-profile'),
+    executablePath: options.browserExecutable,
+    allowedOrigins: options.browserAllowOrigins,
+  };
 }
 
 function textResult(value: unknown, isError = false) {
@@ -154,6 +193,7 @@ function createMcpServer(runtime: Runtime): Server {
     policyName: policy.name,
     approvalMode: options.approvalMode,
     audit,
+    browser: browserAccessFrom(options),
   });
   const byName = new Map<string, ToolSpec>(specs.map((spec) => [spec.name, spec]));
   const server = new Server(
@@ -368,8 +408,11 @@ async function main(): Promise<void> {
   });
   const runtime: Runtime = { options, policy, audit, approvalState, idempotency: new IdempotencyStore() };
   if (options.doctor) {
-    const specs = createToolSpecs({ root: options.root, unrestricted: options.dangerouslyOpenMachine, maxTimeoutMs: options.maxTimeoutMs, policyName: policy.name, approvalMode: options.approvalMode, audit });
+    const specs = createToolSpecs({ root: options.root, unrestricted: options.dangerouslyOpenMachine, maxTimeoutMs: options.maxTimeoutMs, policyName: policy.name, approvalMode: options.approvalMode, audit, browser: browserAccessFrom(options) });
     const checks = await Promise.all(['node', 'git', 'bash'].map(async (command) => ({ command, available: command === 'node' || await new Promise<boolean>((resolve) => { const probe = spawn(command, ['--version'], { stdio: 'ignore' }); probe.once('error', () => resolve(false)); probe.once('close', (code) => resolve(code === 0)); }) })));
+    if (options.enableBrowser) {
+      checks.push({ command: 'chrome/edge', available: await import('./browser-tools.js').then(({ browserOpen, browserClose }) => browserOpen(browserAccessFrom(options)!, { url: 'about:blank', waitMs: 5_000 }).then((tab) => browserClose({ tabId: tab.tabId }).then(() => true)).catch(() => false)) });
+    }
     process.stdout.write(JSON.stringify({ ok: checks.every((check) => check.available), root: options.root, checks, tools: specs.length, hint: 'Install missing dependencies, then rerun --doctor.' }, null, 2) + '\n');
     return;
   }
@@ -381,6 +424,7 @@ async function main(): Promise<void> {
       policyName: policy.name,
       approvalMode: options.approvalMode,
       audit,
+      browser: browserAccessFrom(options),
     });
     process.stdout.write(JSON.stringify({
       ok: true,
@@ -392,6 +436,7 @@ async function main(): Promise<void> {
       approvalMode: options.approvalMode,
       auditFile: audit.filePath,
       dryRun: options.dryRun,
+      browser: options.enableBrowser ? { enabled: true, port: options.browserPort, headless: options.browserHeadless, allowedOrigins: options.browserAllowOrigins } : { enabled: false },
       tools: specs.map((spec) => spec.name),
     }, null, 2) + '\n');
     return;
@@ -479,6 +524,7 @@ async function main(): Promise<void> {
   const cleanup = async () => {
     await closeMcp?.();
     await closeHttpServer?.();
+    if (options.enableBrowser) await import('./browser-tools.js').then(({ closeBrowser }) => closeBrowser());
     process.exit(0);
   };
   process.on('SIGINT', cleanup);

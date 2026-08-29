@@ -39,6 +39,18 @@ import {
   gitStatus,
 } from './git-tools.js';
 import { diskInfo, environmentInfo, listPorts, listProcesses, networkInfo, systemInfo } from './system-tools.js';
+import {
+  browserClick,
+  browserClose,
+  browserEval,
+  browserOpen,
+  browserRead,
+  browserScreenshot,
+  browserType,
+  isBrowserRunning,
+  listOpenTabs,
+  type BrowserAccess,
+} from './browser-tools.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -47,6 +59,7 @@ export interface ToolContext extends MachineAccess {
   policyName?: string;
   approvalMode?: string;
   audit?: AuditLogger;
+  browser?: BrowserAccess;
 }
 
 export interface ToolSpec {
@@ -202,6 +215,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
             powershell,
             // search_code still works without ripgrep, through a slower built-in scanner.
             searchEngine: ripgrep ? 'ripgrep' : 'builtin',
+            browser: context.browser ? { enabled: true, running: isBrowserRunning(), openTabs: listOpenTabs() } : { enabled: false },
           },
           governance: {
             policy: context.policyName ?? 'admin',
@@ -823,7 +837,113 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       handler: async (args) => gitPush({ ...access, path: optionalString(args, 'path'), remote: optionalString(args, 'remote'), branch: optionalString(args, 'branch'), setUpstream: optionalBoolean(args, 'set_upstream') }),
     },
+    ...(context.browser ? browserToolSpecs(context.browser) : []),
   ];
 
   return specs;
+}
+
+/**
+ * Browser control is opt-in (`--enable-browser`) and lives behind its own
+ * origin allowlist and isolated profile; see src/browser-tools.ts. These
+ * specs only enter the registry when a BrowserAccess config is supplied, so
+ * a default run of this server never advertises a live, scriptable browser.
+ */
+function browserToolSpecs(browser: BrowserAccess): ToolSpec[] {
+  const TAB_ID_PROPERTY = { type: 'string', description: 'Tab ID returned by browser_open.' } as const;
+  return [
+    {
+      name: 'browser_open',
+      description: 'Open a URL in an isolated, dedicated Chrome/Edge instance and wait for the page to finish loading. The URL host must match the configured origin allowlist.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Absolute http(s) URL to navigate to.' },
+          wait_ms: { type: 'integer', minimum: 0, maximum: 60000, description: 'Maximum time to wait for document.readyState to reach "complete".' },
+        },
+        required: ['url'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      handler: async (args) => browserOpen(browser, { url: requireString(args, 'url'), waitMs: optionalInteger(args, 'wait_ms') }),
+    },
+    {
+      name: 'browser_read',
+      description: 'Read the current URL, title, and visible text of an open tab, optionally scoped to a CSS selector.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tab_id: TAB_ID_PROPERTY,
+          selector: { type: 'string', description: 'CSS selector to read from; defaults to the whole page body.' },
+          max_chars: { type: 'integer', minimum: 1, maximum: 20000, description: 'Maximum characters of text to return.' },
+        },
+        required: ['tab_id'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => browserRead({ tabId: requireString(args, 'tab_id'), selector: optionalString(args, 'selector'), maxChars: optionalInteger(args, 'max_chars') }),
+    },
+    {
+      name: 'browser_click',
+      description: 'Click the first element matching a CSS selector in an open tab. This dispatches a script-level click, not a trusted OS-level input event.',
+      inputSchema: {
+        type: 'object',
+        properties: { tab_id: TAB_ID_PROPERTY, selector: { type: 'string' } },
+        required: ['tab_id', 'selector'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      handler: async (args) => browserClick({ tabId: requireString(args, 'tab_id'), selector: requireString(args, 'selector') }),
+    },
+    {
+      name: 'browser_type',
+      description: 'Set the value of an input, textarea, or contenteditable element matched by a CSS selector, then dispatch input/change events.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tab_id: TAB_ID_PROPERTY,
+          selector: { type: 'string' },
+          text: { type: 'string' },
+          clear: { type: 'boolean', description: 'Replace the existing value instead of appending; defaults to false.' },
+        },
+        required: ['tab_id', 'selector', 'text'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      handler: async (args) => browserType({ tabId: requireString(args, 'tab_id'), selector: requireString(args, 'selector'), text: requireString(args, 'text'), clear: optionalBoolean(args, 'clear') }),
+    },
+    {
+      name: 'browser_eval',
+      description: 'Evaluate a JavaScript expression in the page and return its JSON-serializable value. The expression runs with the page\'s own privileges; errors here are the page\'s own script errors.',
+      inputSchema: {
+        type: 'object',
+        properties: { tab_id: TAB_ID_PROPERTY, expression: { type: 'string', description: 'JavaScript expression; may return a Promise.' } },
+        required: ['tab_id', 'expression'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      handler: async (args) => browserEval({ tabId: requireString(args, 'tab_id'), expression: requireString(args, 'expression') }),
+    },
+    {
+      name: 'browser_screenshot',
+      description: 'Capture a screenshot of an open tab as base64-encoded image data. Defaults to JPEG at moderate quality to bound response size; use PNG for pixel-exact captures.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tab_id: TAB_ID_PROPERTY,
+          format: { type: 'string', enum: ['png', 'jpeg'] },
+          quality: { type: 'integer', minimum: 1, maximum: 100, description: 'JPEG quality; ignored for PNG.' },
+        },
+        required: ['tab_id'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => {
+        const format = optionalString(args, 'format');
+        if (format !== undefined && format !== 'png' && format !== 'jpeg') throw new ToolError('INVALID_ARGUMENT', '"format" must be png or jpeg.');
+        return browserScreenshot({ tabId: requireString(args, 'tab_id'), format, quality: optionalInteger(args, 'quality') });
+      },
+    },
+    {
+      name: 'browser_close',
+      description: 'Close an open browser tab and release its DevTools connection.',
+      inputSchema: { type: 'object', properties: { tab_id: TAB_ID_PROPERTY }, required: ['tab_id'] },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => browserClose({ tabId: requireString(args, 'tab_id') }),
+    },
+  ];
 }
