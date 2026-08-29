@@ -58,11 +58,32 @@ This encrypts the key with Windows DPAPI for the current Windows user. The `.tun
 
 ### 5. Start the connection
 
+Install/link the CLI once from the repository:
+
 ```powershell
-npm run build
-.\scripts\start-tunnel.ps1
-.\scripts\status-tunnel.ps1
+npm install
+npm link
 ```
+
+Then use the operator CLI:
+
+```powershell
+chatgpt-local setup
+chatgpt-local up
+chatgpt-local status
+```
+
+Lifecycle commands:
+
+```text
+chatgpt-local up
+chatgpt-local down
+chatgpt-local restart
+chatgpt-local status
+chatgpt-local doctor
+```
+
+The underlying `scripts/` commands remain available for debugging, but normal operation should use `chatgpt-local`.
 
 Continue only when the status reports:
 

@@ -205,17 +205,31 @@ runtime profile: chatgpt-machine-runtime
 MCP command:     node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine
 ```
 
-Helper scripts:
+Helper scripts (`.ps1` on Windows, `.sh` on macOS/Ubuntu/WSL):
 
 ```powershell
 .\scripts\start-tunnel.ps1
 .\scripts\status-tunnel.ps1
 .\scripts\stop-tunnel.ps1
+.\scripts\refresh-tunnel.ps1
 ```
+
+Operator CLI — normal entry point that wraps the scripts above (after `npm link`):
+
+```powershell
+chatgpt-local setup
+chatgpt-local up
+chatgpt-local down
+chatgpt-local restart
+chatgpt-local status
+chatgpt-local doctor
+```
+
+The operator CLI bin is `chatgpt-local` (`src/cli.ts` → `dist/cli.js`); the tunnel runtime alias remains `chatgpt-machine` — they are distinct. `refresh-tunnel.*` restarts the tunnel in a detached worker and logs to `.tunnel/refresh-tunnel.log`. Tests for the operator CLI live in `src/cli.test.ts`.
 
 Do not commit decrypted runtime keys.
 
-The runtime key file under `.tunnel/` is machine-local and Git-ignored. `start-tunnel.ps1` should continue to remove `CONTROL_PLANE_API_KEY` from the process environment in `finally`.
+The runtime key file under `.tunnel/` is machine-local and Git-ignored. `start-tunnel.ps1` (and `refresh-tunnel.ps1`) must continue to remove `CONTROL_PLANE_API_KEY` from the process environment in `finally`.
 
 Avoid changing tunnel IDs, organization IDs, aliases, or profiles unless the task explicitly concerns tunnel provisioning.
 

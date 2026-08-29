@@ -5,6 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
+    "chatgpt-local": "./dist/cli.js",
     "chatgpt-machine-mcp": "./dist/index.js"
   },
   "files": [
