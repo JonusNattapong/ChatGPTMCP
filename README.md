@@ -76,6 +76,99 @@ Run stdio MCP with unrestricted machine access:
 node dist\index.js --root D:\Projects\Github --dangerously-open-machine
 ```
 
+## Setup from a new Windows machine
+
+The complete connection path is:
+
+```text
+ChatGPT Web -> OpenAI Secure MCP Tunnel -> tunnel-client -> local MCP -> Windows
+```
+
+### Step 1: install prerequisites
+
+Install Node.js 20+, Git, and GitHub CLI (`gh`). Verify them:
+
+```powershell
+node --version
+git --version
+gh --version
+gh auth login
+```
+
+### Step 2: clone and build
+
+```powershell
+Set-Location D:\Projects\Github
+gh repo clone JonusNattapong/ChatGPTMCP
+Set-Location D:\Projects\Github\ChatGPTMCP
+npm install
+npm test
+```
+
+The repository intentionally does not include the tunnel executable or runtime key.
+
+### Step 3: download tunnel-client
+
+For 64-bit Windows:
+
+```powershell
+Set-Location D:\Projects\Github\ChatGPTMCP
+New-Item -ItemType Directory -Force tools\tunnel-client-v0.0.13 | Out-Null
+gh release download v0.0.13 --repo openai/tunnel-client --pattern tunnel-client-v0.0.13-windows-amd64.zip --dir tools
+Expand-Archive -LiteralPath tools\tunnel-client-v0.0.13-windows-amd64.zip -DestinationPath tools\tunnel-client-v0.0.13 -Force
+Test-Path tools\tunnel-client-v0.0.13\tunnel-client.exe
+```
+
+![Download tunnel-client](docs/tunnel-client-release-annotated.png)
+
+เลื่อนลงในหัวข้อ **Assets** แล้วเลือกไฟล์ Windows ที่ตรงกับสถาปัตยกรรมเครื่อง
+
+### Step 4: create the OpenAI tunnel
+
+เปิด OpenAI Platform -> Organization settings -> **Tunnels** -> **Create tunnel** แล้วตั้งชื่อ เช่น `ChatGPT Machine MCP` เก็บ tunnel ID และ organization ID ไว้เป็นค่ากำหนดของเครื่อง ห้ามเผยแพร่ runtime API key
+
+![OpenAI Tunnels page](docs/tunnel-page-annotated.png)
+
+ข้อมูล ID ในภาพถูก redact ก่อนใส่ repository
+
+ถ้าเป็น tunnel ใหม่ ให้แก้ค่า `--tunnel-id` และ `--organization-id` ใน `scripts\start-tunnel.ps1` ให้ตรงกับ tunnel ของคุณ โดยไม่ใส่ key ลงใน source
+
+### Step 5: store the runtime key with Windows DPAPI
+
+```powershell
+New-Item -ItemType Directory -Force .tunnel | Out-Null
+$secureKey = Read-Host 'OpenAI tunnel runtime API key' -AsSecureString
+ConvertFrom-SecureString $secureKey | Set-Content .tunnel\control-plane-api-key.dpapi
+```
+
+ไฟล์นี้ถูกเข้ารหัสด้วย Windows DPAPI และถูก ignore โดย Git ใช้ได้กับ Windows user profile เดิมเท่านั้น
+
+### Step 6: start and verify
+
+```powershell
+npm run build
+.\scripts\start-tunnel.ps1
+.\scripts\status-tunnel.ps1
+```
+
+ต้องเห็น `process_running: True`, `healthy: True`, และ `ready: True` จึงถือว่าใช้งานได้ หยุด tunnel ด้วย:
+
+```powershell
+.\scripts\stop-tunnel.ps1
+```
+
+### Step 7: connect ChatGPT Web
+
+ใน ChatGPT Web ให้เปิด Developer mode ถ้าจำเป็น จากนั้นเพิ่ม MCP app/connector โดยเลือก tunnel ที่สร้างไว้ เลือก `ChatGPT Machine MCP` แล้วกด refresh/reconnect tools จนเห็น `machine_status`, `read_file`, `apply_patch`, `git_status`, และ `start_process`
+
+ทดสอบแบบอ่านอย่างเดียวก่อน:
+
+```text
+ใช้ machine_status ตรวจว่าเชื่อมต่อเครื่อง local สำเร็จ และอย่าแก้ไขไฟล์
+```
+
+หลังแก้โค้ด MCP ให้รัน `npm run build` -> `stop-tunnel.ps1` -> `start-tunnel.ps1` -> refresh connector ใน ChatGPT Web เพื่อโหลด schema ล่าสุด
+
 ## Access modes
 
 ### Workspace-only
