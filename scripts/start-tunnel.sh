@@ -56,6 +56,6 @@ CONTROL_PLANE_API_KEY="${runtime_key}" "${client_path}" runtimes connect \
   --tunnel-id "${tunnel_id}" \
   --organization-id "${organization_id}" \
   --runtime-api-key env:CONTROL_PLANE_API_KEY \
-  --mcp-command "node ${project_root}/dist/index.js --root ${workspace_root} --dangerously-open-machine"
+  --mcp-command "node ${project_root}/dist/index.js --root ${workspace_root} --dangerously-open-machine --enable-browser"
 
 "${project_root}/scripts/status-tunnel.sh"

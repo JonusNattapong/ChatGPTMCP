@@ -7,7 +7,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $clientPath = Join-Path $projectRoot 'tools\tunnel-client-v0.0.13\tunnel-client.exe'
 $keyPath = Join-Path $projectRoot '.tunnel\control-plane-api-key.dpapi'
 $profileDir = Join-Path $env:APPDATA 'tunnel-client'
-$mcpCommand = 'node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine'
+$mcpCommand = 'node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine --enable-browser'
 
 if (-not (Test-Path -LiteralPath $clientPath)) {
     throw "Tunnel client not found: $clientPath"
