@@ -93,10 +93,11 @@ healthy         : True
 ready           : True
 ```
 
-Stop the connection when it is not needed:
+Stop or restart the connection when it is not needed:
 
 ```powershell
-.\scripts\stop-tunnel.ps1
+chatgpt-local down      # or .\scripts\stop-tunnel.ps1
+chatgpt-local restart   # detached refresh (logs to .tunnel/refresh-tunnel.log)
 ```
 
 ### 6. Add it in ChatGPT Web
@@ -115,6 +116,7 @@ After changing MCP code: run `npm run build`, stop/start the tunnel, and refresh
 Useful local checks:
 
 ```powershell
+chatgpt-local doctor          # same as node dist/index.js --doctor
 node dist/index.js --doctor
 node dist/index.js --check
 # Preview all mutations without executing them:
