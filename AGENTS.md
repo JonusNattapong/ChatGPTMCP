@@ -6,11 +6,27 @@ Repository instructions for coding agents working in `ChatGPTMCP`.
 
 `chatgpt-machine-mcp` is a small local MCP server that intentionally exposes high-authority machine operations.
 
-Keep the implementation narrow. The core contract is three tools:
+Keep the implementation narrow. The public contract is nineteen tools:
 
 1. `machine_status`
-2. `shell_command`
-3. `apply_patch`
+2. `read_file`
+3. `list_directory`
+4. `find_files`
+5. `file_info`
+6. `image_info`
+7. `save_image_from_url`
+8. `search_code`
+9. `write_file`
+10. `edit_file`
+11. `update_file`
+12. `shell_command`
+13. `start_process`
+14. `process_status`
+15. `read_process_output`
+16. `stop_process`
+17. `git_status`
+18. `git_diff`
+19. `apply_patch`
 
 Do not introduce orchestration, planning, memory, agent delegation, or a generic task framework into this repository unless a concrete requirement demands it. This project is infrastructure plumbing, not an agent harness.
 
@@ -19,10 +35,11 @@ Do not introduce orchestration, planning, memory, agent delegation, or a generic
 Treat these files as authoritative, in this order:
 
 1. `src/index.ts` — MCP schema, CLI, transports, HTTP authentication.
-2. `src/shell-tools.ts` — path policy, shell execution, patch semantics.
-3. `scripts/*.ps1` — local Secure MCP Tunnel lifecycle.
-4. tests — executable contract.
-5. `README.md` — human-facing description of the above.
+2. `src/file-tools.ts` — bounded file operations and structured code search.
+3. `src/shell-tools.ts` — path policy, shell execution, patch semantics.
+4. `scripts/*.ps1` — local Secure MCP Tunnel lifecycle.
+5. tests — executable contract.
+6. `README.md` — human-facing description of the above.
 
 If documentation and code disagree, fix the documentation or implementation deliberately; do not preserve stale claims.
 
@@ -52,6 +69,10 @@ Do not restart the tunnel merely for documentation-only changes.
 The public MCP surface is deliberately small.
 
 - `machine_status` must remain read-only.
+- `read_file`, `list_directory`, `find_files`, `file_info`, `image_info`, and `search_code` are read-only.
+- `save_image_from_url` is destructive/open-world because it performs network I/O and writes a file.
+- `start_process` and `stop_process` are destructive; `process_status` and `read_process_output` are read-only.
+- `write_file`, `edit_file`, and `update_file` are destructive but not open-world by annotation.
 - `shell_command` is destructive/open-world.
 - `apply_patch` is destructive but not open-world by annotation.
 - changing tool names or argument schemas is a breaking integration change.
@@ -68,6 +89,25 @@ Without `--dangerously-open-machine`:
 - path-policy changes require tests.
 
 Do not weaken this mode for convenience.
+
+### File operations and code search
+
+- text file operations must reuse `resolveMachinePath` and enforce the workspace boundary;
+- `read_file` output must remain bounded and reject binary inputs;
+- `list_directory` and `find_files` must keep entry, depth, and recursion limits, and must not follow symlinks;
+- `file_info` must report hashes only for regular files;
+- `image_info` and `save_image_from_url` must validate PNG/JPEG/WebP signatures;
+- image downloads must require HTTPS, reject local/private DNS results, limit redirects, and never accept caller-provided cookies or authorization headers;
+- image downloads must not overwrite an existing file unless explicitly requested;
+- background processes must return an explicit PID;
+- process output must be bounded in memory and process tracking is session-local;
+- workspace-only mode may inspect or stop only processes created by `start_process` in the current MCP session;
+- `git_status` and `git_diff` are read-only and must invoke Git directly, without shell interpolation;
+- `write_file` must not overwrite an existing file without explicit `overwrite=true`;
+- `edit_file` must reject ambiguous exact matches unless `replace_all=true`;
+- `update_file` uses inclusive 1-based line ranges;
+- `search_code` invokes `rg` directly without shell interpolation and must keep result and timeout limits;
+- path-policy and mutation semantics require focused tests.
 
 ### Unrestricted mode
 

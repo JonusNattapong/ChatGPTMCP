@@ -27,8 +27,24 @@ test('stdio MCP exposes and executes the machine tools', async () => {
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), [
       'apply_patch',
+      'edit_file',
+      'file_info',
+      'find_files',
+      'git_diff',
+      'git_status',
+      'image_info',
+      'list_directory',
       'machine_status',
+      'process_status',
+      'read_file',
+      'read_process_output',
+      'save_image_from_url',
+      'search_code',
       'shell_command',
+      'start_process',
+      'stop_process',
+      'update_file',
+      'write_file',
     ]);
 
     const status = await client.callTool({ name: 'machine_status', arguments: {} });

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 export type ShellKind = 'auto' | 'bash' | 'powershell' | 'cmd';
 
@@ -16,6 +17,7 @@ export interface ShellCommandOptions extends MachineAccess {
   shell?: ShellKind;
   timeoutMs?: number;
   maxTimeoutMs?: number;
+  maxOutputBytes?: number;
 }
 
 export interface ShellCommandResult {
@@ -25,6 +27,8 @@ export interface ShellCommandResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  outputTruncated: boolean;
+  durationMs: number;
 }
 
 interface PatchOperation {
@@ -104,6 +108,32 @@ function selectShell(shell: ShellKind): {
   return { kind: selected, executable: 'bash', args: ['-lc'] };
 }
 
+async function terminateProcessTree(child: import('node:child_process').ChildProcess): Promise<void> {
+  if (!child.pid) {
+    child.kill();
+    return;
+  }
+  if (process.platform === 'win32') {
+    await new Promise<void>((resolve) => {
+      const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      killer.once('error', () => {
+        child.kill();
+        resolve();
+      });
+      killer.once('close', () => resolve());
+    });
+    return;
+  }
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
+  }
+}
+
 export async function runShellCommand(options: ShellCommandOptions): Promise<ShellCommandResult> {
   if (!options.command.trim()) throw new Error('"command" parameter is required.');
   if (options.shell && !['auto', 'bash', 'powershell', 'cmd'].includes(options.shell)) {
@@ -116,6 +146,11 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
     throw new Error(`"timeout_ms" must be between 100 and ${maxTimeoutMs}.`);
   }
 
+  const maxOutputBytes = options.maxOutputBytes ?? MAX_OUTPUT_BYTES;
+  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > MAX_OUTPUT_BYTES) {
+    throw new Error(`"max_output_bytes" must be an integer between 1024 and ${MAX_OUTPUT_BYTES}.`);
+  }
+
   const workdir = await resolveMachinePath(options, options.workdir || '.', true);
   const shell = selectShell(options.shell ?? 'auto');
 
@@ -124,22 +159,30 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
       cwd: workdir,
       env: process.env,
       windowsHide: true,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    const startedAt = Date.now();
     let stdout = '';
     let stderr = '';
     let outputBytes = 0;
     let timedOut = false;
+    let outputTruncated = false;
     let settled = false;
 
     const append = (target: 'stdout' | 'stderr', chunk: Buffer) => {
-      outputBytes += chunk.length;
-      if (outputBytes > MAX_OUTPUT_BYTES) {
-        child.kill();
-        return;
+      if (outputTruncated) return;
+      const remaining = maxOutputBytes - outputBytes;
+      const accepted = chunk.length <= remaining ? chunk : chunk.subarray(0, Math.max(0, remaining));
+      outputBytes += accepted.length;
+      if (target === 'stdout') stdout += stdoutDecoder.write(accepted);
+      else stderr += stderrDecoder.write(accepted);
+      if (accepted.length < chunk.length || outputBytes >= maxOutputBytes) {
+        outputTruncated = true;
+        void terminateProcessTree(child);
       }
-      if (target === 'stdout') stdout += chunk.toString();
-      else stderr += chunk.toString();
     };
 
     child.stdout.on('data', (chunk: Buffer) => append('stdout', chunk));
@@ -153,17 +196,28 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      void terminateProcessTree(child);
     }, timeoutMs);
 
     child.on('close', (exitCode) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (outputBytes > MAX_OUTPUT_BYTES) {
-        stderr += `\nOutput exceeded the ${MAX_OUTPUT_BYTES}-byte limit and the process was stopped.`;
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
+      if (outputTruncated) {
+        stderr += `${stderr ? '\n' : ''}Output reached the ${maxOutputBytes}-byte limit and the process tree was stopped.`;
       }
-      resolve({ shell: shell.kind, workdir, exitCode, stdout, stderr, timedOut });
+      resolve({
+        shell: shell.kind,
+        workdir,
+        exitCode,
+        stdout,
+        stderr,
+        timedOut,
+        outputTruncated,
+        durationMs: Date.now() - startedAt,
+      });
     });
   });
 }
@@ -254,7 +308,7 @@ function applyUpdate(original: string, patchLines: string[], filePath: string): 
   return fileLines.join(eol) + (trailingNewline ? eol : '');
 }
 
-export async function applyFilePatch(accessConfig: MachineAccess, patchText: string): Promise<string[]> {
+export async function applyFilePatch(accessConfig: MachineAccess, patchText: string, dryRun = false): Promise<string[]> {
   const operations = parsePatch(patchText);
   const prepared: Array<PatchOperation & { source: string; destination?: string; content?: string }> = [];
   const claimedPaths = new Set<string>();
@@ -310,6 +364,13 @@ export async function applyFilePatch(accessConfig: MachineAccess, patchText: str
       });
     }
   }
+
+  const describe = (operation: (typeof prepared)[number]): string => operation.kind === 'delete'
+    ? `deleted ${operation.filePath}`
+    : operation.destination
+      ? `moved ${operation.filePath} -> ${operation.moveTo}`
+      : `${operation.kind === 'add' ? 'added' : 'updated'} ${operation.filePath}`;
+  if (dryRun) return prepared.map(describe);
 
   const changed: string[] = [];
   for (const operation of prepared) {
