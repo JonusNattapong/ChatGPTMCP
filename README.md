@@ -1,5 +1,7 @@
 # ChatGPT Machine MCP
 
+**English** | [ไทย](README.th.md)
+
 Use ChatGPT Web with a trusted local Windows machine through OpenAI Secure MCP Tunnel.
 
 This README is the installation guide. For tools, architecture, transport, security, and contributor details, see the **[technical guide](https://jonusnattapong.github.io/ChatGPTMCP/)**.
