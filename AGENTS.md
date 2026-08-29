@@ -34,12 +34,16 @@ Do not introduce orchestration, planning, memory, agent delegation, or a generic
 
 Treat these files as authoritative, in this order:
 
-1. `src/index.ts` — MCP schema, CLI, transports, HTTP authentication.
-2. `src/file-tools.ts` — bounded file operations and structured code search.
-3. `src/shell-tools.ts` — path policy, shell execution, patch semantics.
-4. `scripts/*.ps1` — local Secure MCP Tunnel lifecycle.
-5. tests — executable contract.
-6. `README.md` — human-facing description of the above.
+1. `src/tools.ts` — the tool registry: schema, description, argument validation, and handler for every tool.
+2. `src/index.ts` — CLI, transports, HTTP authentication, and the shared result envelope.
+3. `src/errors.ts` — `ToolError` and the stable `error.code` vocabulary.
+4. `src/file-tools.ts` — bounded file operations, directory walk, and structured code search.
+5. `src/shell-tools.ts` — path policy, shell execution, patch semantics.
+6. `scripts/*.ps1` — local Secure MCP Tunnel lifecycle.
+7. tests — executable contract.
+8. `README.md` and `docs/*.svg` — human-facing description of the above.
+
+Tool definitions and handlers must stay together in `src/tools.ts`. `machine_status` derives its tool list from that registry; do not reintroduce a hand-maintained copy.
 
 If documentation and code disagree, fix the documentation or implementation deliberately; do not preserve stale claims.
 
@@ -59,6 +63,8 @@ npm test
 ```
 
 If MCP schemas, tool names, annotations, CLI options, HTTP behavior, or tunnel startup behavior changed, update `README.md` in the same change.
+
+If the module layout, the transports, the gate order of a tool call, or the error-code set changed, update `docs/architecture.svg` and `docs/request-flow.svg` too. They are hand-authored SVG with no build step and no external assets; edit the markup directly and keep them self-contained.
 
 Do not restart the tunnel merely for documentation-only changes.
 
@@ -104,10 +110,20 @@ Do not weaken this mode for convenience.
 - workspace-only mode may inspect or stop only processes created by `start_process` in the current MCP session;
 - `git_status` and `git_diff` are read-only and must invoke Git directly, without shell interpolation;
 - `write_file` must not overwrite an existing file without explicit `overwrite=true`;
-- `edit_file` must reject ambiguous exact matches unless `replace_all=true`;
+- `edit_file` must reject ambiguous exact matches unless `replace_all` or `expected_replacements` is given;
 - `update_file` uses inclusive 1-based line ranges;
 - `search_code` invokes `rg` directly without shell interpolation and must keep result and timeout limits;
+- the built-in search fallback exists only for hosts without `rg`; it must stay bounded (binary and large files skipped) and must report `engine: "builtin"`;
+- `read_file`, `write_file`, `edit_file`, and `update_file` return the file `sha256`, and `expected_sha256` must fail closed with `PRECONDITION_FAILED`;
+- `stop_process` must wait for the process to exit before returning;
 - path-policy and mutation semantics require focused tests.
+
+### Result envelope and errors
+
+- every tool result is `{ "ok": true, ... }` or `{ "ok": false, "tool", "error": { code, message, hint?, details? } }`, and a failure also sets MCP `isError`;
+- `error.code` values in `src/errors.ts` are a public contract; add codes rather than repurposing existing ones;
+- failures that a caller can act on should carry `hint` and the `details` needed to retry;
+- argument validation belongs in `src/tools.ts` and must reject a missing or mistyped argument instead of coercing it.
 
 ### Unrestricted mode
 

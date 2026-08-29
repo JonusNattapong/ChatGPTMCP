@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-machine-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local MCP bridge that lets ChatGPT Web operate a machine and delegate work to Codex CLI",
   "type": "module",
   "main": "dist/index.js",
