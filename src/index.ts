@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { readdir } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import {
   acceptedContent,
   createMcpHandler,
@@ -484,7 +485,9 @@ async function main(): Promise<void> {
   process.on('SIGTERM', cleanup);
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.stack : String(error));
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.stack : String(error));
+    process.exit(1);
+  });
+}
