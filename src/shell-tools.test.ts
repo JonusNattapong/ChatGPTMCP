@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -31,7 +31,7 @@ test('unrestricted mode accepts an absolute working directory outside root', asy
       timeoutMs: 10_000,
     });
     assert.equal(result.exitCode, 0);
-    assert.equal(path.resolve(result.stdout), path.resolve(outside));
+    assert.equal(await realpath(path.resolve(result.stdout)), await realpath(path.resolve(outside)));
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
