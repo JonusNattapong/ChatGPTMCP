@@ -27,9 +27,13 @@ test('stdio MCP exposes and executes the machine tools', async () => {
     { name: 'chatgpt-machine-mcp-smoke', version: '0.1.0' },
     { versionNegotiation: { mode: 'auto' } },
   );
+  let resourceUpdates = 0;
+  client.setNotificationHandler('notifications/resources/updated', async () => { resourceUpdates++; });
 
   try {
     await client.connect(transport);
+    const capabilities = client.getServerCapabilities();
+    assert.ok(capabilities?.prompts && capabilities.resources && capabilities.completions && capabilities.logging);
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), [
       'apply_patch',
@@ -69,8 +73,10 @@ test('stdio MCP exposes and executes the machine tools', async () => {
       'write_file',
     ]);
 
-    const status = await client.callTool({ name: 'machine_status', arguments: {} });
+    const progress: number[] = [];
+    const status = await client.callTool({ name: 'machine_status', arguments: {} }, { onprogress: (event) => { progress.push(event.progress); } });
     assert.equal(status.isError, undefined);
+    assert.deepEqual(progress, [0, 1]);
     const statusPayload = JSON.parse((status.content as Array<{ text: string }>)[0].text);
     assert.equal(statusPayload.ok, true);
     assert.equal(statusPayload.accessMode, 'UNRESTRICTED_MACHINE');
@@ -84,6 +90,7 @@ test('stdio MCP exposes and executes the machine tools', async () => {
     assert.equal(resources.resources[0]?.uri, 'workspace://status');
     const resource = await client.readResource({ uri: 'workspace://status' });
     assert.match(JSON.stringify(resource), /UNRESTRICTED_MACHINE/);
+    const subscription = await client.listen({ resourceSubscriptions: ['workspace://status'] });
 
     // Failures answer with the same envelope and a stable machine-readable code.
     const missing = await client.callTool({ name: 'read_file', arguments: { path: 'no-such-file-here.txt' } });
@@ -112,6 +119,7 @@ test('stdio MCP exposes and executes the machine tools', async () => {
 
     const retryArgs = { path: 'retry.txt', content: 'once', idempotency_key: 'retry-request-123' };
     const firstRetry = await client.callTool({ name: 'write_file', arguments: retryArgs });
+    assert.ok(resourceUpdates >= 1);
     const secondRetry = await client.callTool({ name: 'write_file', arguments: retryArgs });
     assert.deepEqual(secondRetry, firstRetry);
     const completion = await client.complete({ ref: { type: 'ref/prompt', name: 'safe-edit-loop' }, argument: { name: 'path', value: 'ret' } });
@@ -121,6 +129,7 @@ test('stdio MCP exposes and executes the machine tools', async () => {
 
     const protectedPath = await client.callTool({ name: 'read_file', arguments: { path: path.join(root, '.env') } });
     assert.equal(JSON.parse((protectedPath.content as Array<{ text: string }>)[0].text).error.code, 'POLICY_DENIED');
+    await subscription.close();
 
     const promoted = await client.callTool({ name: 'shell_command', arguments: { command: 'node -e "setTimeout(() => console.log(\'done\'), 1000)"', timeout_ms: 100, on_timeout: 'background' } });
     const promotedPayload = JSON.parse((promoted.content as Array<{ text: string }>)[0].text);

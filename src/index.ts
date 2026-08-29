@@ -159,7 +159,7 @@ function createMcpServer(runtime: Runtime): Server {
   const server = new Server(
     { name: 'chatgpt-machine-mcp', version: '0.3.0' },
     {
-      capabilities: { tools: {}, prompts: { listChanged: false }, resources: { subscribe: false, listChanged: false }, completions: {}, logging: {} },
+      capabilities: { tools: {}, prompts: { listChanged: false }, resources: { subscribe: true, listChanged: false }, completions: {}, logging: {} },
       cacheHints: {
         'tools/list': { ttlMs: 30_000, cacheScope: 'private' },
       },
@@ -189,6 +189,8 @@ function createMcpServer(runtime: Runtime): Server {
     if (request.params.uri !== 'workspace://status') throw new ToolError('NOT_FOUND', `Unknown resource: ${request.params.uri}`);
     return { contents: [{ uri: 'workspace://status', mimeType: 'application/json', text: JSON.stringify({ root: options.root, accessMode: options.dangerouslyOpenMachine ? 'UNRESTRICTED_MACHINE' : 'WORKSPACE_ONLY', policy: policy.name, dryRun: options.dryRun }) }] };
   });
+  server.setRequestHandler('resources/subscribe', async () => ({}));
+  server.setRequestHandler('resources/unsubscribe', async () => ({}));
   server.setRequestHandler('completion/complete', async (request) => {
     const prefix = request.params.argument.value.replace(/\\/g, '/');
     const parent = path.dirname(prefix) === '.' ? '.' : path.dirname(prefix);
@@ -223,7 +225,10 @@ function createMcpServer(runtime: Runtime): Server {
     if (typeof key === 'string') {
       try {
         const cached = idempotency.lookup(key, name, args);
-        if (cached !== undefined) return cached as ReturnType<typeof textResult>;
+        if (cached !== undefined) {
+          if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 1, total: 1, message: `Replayed ${name}` } });
+          return cached as ReturnType<typeof textResult>;
+        }
       } catch (error: unknown) {
         return errorResult(name, error);
       }
@@ -309,6 +314,8 @@ function createMcpServer(runtime: Runtime): Server {
         });
         const response = failed ? textResult({ ok: false, ...(result as Record<string, unknown>) }, true) : successResult(result);
         if (typeof key === 'string') idempotency.store(key, name, args, response);
+        if (!failed && !spec.annotations.readOnlyHint) await ctx.mcpReq.notify({ method: 'notifications/resources/updated', params: { uri: 'workspace://status' } });
+        if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 1, total: 1, message: `${failed ? 'Failed' : 'Completed'} ${name}` } });
         return response;
       } catch (error: unknown) {
         const described = describeError(error);
