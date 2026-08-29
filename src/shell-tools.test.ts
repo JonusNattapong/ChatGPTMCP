@@ -28,7 +28,9 @@ test('unrestricted mode accepts an absolute working directory outside root', asy
       root,
       unrestricted: true,
       workdir: outside,
-      timeoutMs: 10_000,
+      // Browser lifecycle tests may launch Edge in parallel on Windows CI,
+      // where a cold Node child can take longer than ten seconds to start.
+      timeoutMs: 30_000,
     });
     assert.equal(result.exitCode, 0);
     assert.equal(await realpath(path.resolve(result.stdout)), await realpath(path.resolve(outside)));
