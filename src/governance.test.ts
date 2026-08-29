@@ -1,11 +1,11 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { AuditLogger, redactSecrets } from './audit.js';
 import { IdempotencyStore } from './idempotency.js';
-import { evaluatePolicy, loadPolicy } from './policy.js';
+import { evaluatePolicy, loadPolicy, policyFingerprint, validatePolicyConfig } from './policy.js';
 import { environmentInfo, listPorts, listProcesses, networkInfo, systemInfo } from './system-tools.js';
 import { createToolSpecs } from './tools.js';
 
@@ -128,4 +128,21 @@ test('system inspection tools return bounded structured information and redact s
     if (previous === undefined) delete process.env.MACHINE_MCP_TEST_TOKEN;
     else process.env.MACHINE_MCP_TEST_TOKEN = previous;
   }
+});
+
+test('policy validation rejects unknown tools and malformed regular expressions', async () => {
+  await withRoot('machine-mcp-policy-validation-', async (root) => {
+    const specs = createToolSpecs({ root, unrestricted: false, maxTimeoutMs: 60_000 });
+    const unknownPath = path.join(root, 'unknown.json');
+    await writeFile(unknownPath, JSON.stringify({ extends: 'admin', tools: { deny: ['git_puhs'] } }), 'utf8');
+    assert.throws(() => validatePolicyConfig(loadPolicy(unknownPath, root), specs.map((spec) => spec.name)), /unknown tool: git_puhs/);
+
+    const regexPath = path.join(root, 'regex.json');
+    await writeFile(regexPath, JSON.stringify({ extends: 'admin', shell: { deny: ['[unterminated'] } }), 'utf8');
+    assert.throws(() => validatePolicyConfig(loadPolicy(regexPath, root), specs.map((spec) => spec.name)), /invalid regular expression/);
+
+    const admin = loadPolicy('admin', root);
+    validatePolicyConfig(admin, specs.map((spec) => spec.name));
+    assert.match(policyFingerprint(admin), /^[a-f0-9]{64}$/);
+  });
 });

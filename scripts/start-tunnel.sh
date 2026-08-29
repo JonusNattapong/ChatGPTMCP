@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -6,7 +6,7 @@ platform="$(uname -s)"
 case "$(uname -m)" in
   arm64|aarch64) asset_arch="arm64" ;;
   x86_64) asset_arch="amd64" ;;
-  *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
 client_path="${project_root}/tools/tunnel-client-v0.0.13/tunnel-client"
@@ -17,7 +17,11 @@ else
 fi
 tunnel_id="${OPENAI_TUNNEL_ID:?Set OPENAI_TUNNEL_ID before starting the tunnel.}"
 organization_id="${OPENAI_ORGANIZATION_ID:?Set OPENAI_ORGANIZATION_ID before starting the tunnel.}"
-workspace_root="${MCP_WORKSPACE_ROOT:-${project_root}}"
+workspace_root="${MCP_WORKSPACE_ROOT:-$(dirname "${project_root}")}"
+access_mode="${MCP_ACCESS_MODE:-unrestricted}"
+policy="${MCP_POLICY:-admin}"
+approval_mode="${MCP_APPROVAL_MODE:-mrtr}"
+supervisor_timeout="${MCP_SUPERVISOR_TIMEOUT_MS:-120000}"
 if [[ "${platform}" == "Darwin" ]]; then
   runtime_key="$(security find-generic-password -a "${USER}" -s chatgpt-machine-mcp-tunnel -w)"
 else
@@ -56,6 +60,8 @@ CONTROL_PLANE_API_KEY="${runtime_key}" "${client_path}" runtimes connect \
   --tunnel-id "${tunnel_id}" \
   --organization-id "${organization_id}" \
   --runtime-api-key env:CONTROL_PLANE_API_KEY \
-  --mcp-command "node ${project_root}/dist/index.js --root ${workspace_root} --dangerously-open-machine"
+  --mcp-command "node ${project_root}/dist/supervisor.js --supervisor-timeout ${supervisor_timeout} --root ${workspace_root} --policy ${policy} --approval-mode ${approval_mode} $([[ ${access_mode} == unrestricted ]] && printf %s --dangerously-open-machine)"
 
 "${project_root}/scripts/status-tunnel.sh"
+
+

@@ -1,4 +1,4 @@
-# AGENTS.md
+﻿# AGENTS.md
 
 Repository instructions for coding agents working in `ChatGPTMCP`.
 
@@ -50,14 +50,14 @@ Do not introduce orchestration, planning, memory, agent delegation, or a generic
 
 Treat these files as authoritative, in this order:
 
-1. `src/tools.ts` — the tool registry: schema, description, argument validation, and handler for every tool.
-2. `src/index.ts` — CLI, transports, HTTP authentication, and the shared result envelope.
-3. `src/errors.ts` — `ToolError` and the stable `error.code` vocabulary.
-4. `src/file-tools.ts` — bounded file operations, directory walk, and structured code search.
-5. `src/shell-tools.ts` — path policy, shell execution, patch semantics.
-6. `scripts/*.ps1` and `scripts/*.sh` — local Secure MCP Tunnel lifecycle on Windows, macOS, Ubuntu, and WSL.
-7. tests — executable contract.
-8. `README.md` and `docs/*.svg` — human-facing description of the above.
+1. `src/tools.ts` â€” the tool registry: schema, description, argument validation, and handler for every tool.
+2. `src/index.ts` â€” CLI, transports, HTTP authentication, and the shared result envelope.
+3. `src/errors.ts` â€” `ToolError` and the stable `error.code` vocabulary.
+4. `src/file-tools.ts` â€” bounded file operations, directory walk, and structured code search.
+5. `src/shell-tools.ts` â€” path policy, shell execution, patch semantics.
+6. `scripts/*.ps1` and `scripts/*.sh` â€” local Secure MCP Tunnel lifecycle on Windows, macOS, Ubuntu, and WSL.
+7. tests â€” executable contract.
+8. `README.md` and `docs/*.svg` â€” human-facing description of the above.
 
 Tool definitions and handlers must stay together in `src/tools.ts`. `machine_status` derives its tool list from that registry; do not reintroduce a hand-maintained copy.
 
@@ -202,7 +202,7 @@ Current local integration:
 ```text
 runtime alias:   chatgpt-machine
 runtime profile: chatgpt-machine-runtime
-MCP command:     node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine
+MCP command:     node D:/Projects/Github/ChatGPTMCP/dist/supervisor.js --root D:/Projects/Github --dangerously-open-machine
 ```
 
 Helper scripts (`.ps1` on Windows, `.sh` on macOS/Ubuntu/WSL):
@@ -214,7 +214,7 @@ Helper scripts (`.ps1` on Windows, `.sh` on macOS/Ubuntu/WSL):
 .\scripts\refresh-tunnel.ps1
 ```
 
-Operator CLI — normal entry point that wraps the scripts above (after `npm link`):
+Operator CLI â€” normal entry point that wraps the scripts above (after `npm link`):
 
 ```powershell
 chatgpt-local setup
@@ -225,7 +225,7 @@ chatgpt-local status
 chatgpt-local doctor
 ```
 
-The operator CLI bin is `chatgpt-local` (`src/cli.ts` → `dist/cli.js`); the tunnel runtime alias remains `chatgpt-machine` — they are distinct. `refresh-tunnel.*` restarts the tunnel in a detached worker and logs to `.tunnel/refresh-tunnel.log`. Tests for the operator CLI live in `src/cli.test.ts`.
+The operator CLI bin is `chatgpt-local` (`src/cli.ts` â†’ `dist/cli.js`); the tunnel runtime alias remains `chatgpt-machine` â€” they are distinct. `refresh-tunnel.*` restarts the tunnel in a detached worker and logs to `.tunnel/refresh-tunnel.log`. Tests for the operator CLI live in `src/cli.test.ts`.
 
 Do not commit decrypted runtime keys.
 
@@ -289,3 +289,4 @@ Usually out of scope:
 - product-scale UI/dashboard code. The bounded localhost-only `/ui` audit viewer is part of the HTTP transport diagnostics and must stay dependency-free.
 
 If those capabilities are needed, integrate this MCP server as a machine-access adapter from a higher-level system instead of turning this repository into that system.
+

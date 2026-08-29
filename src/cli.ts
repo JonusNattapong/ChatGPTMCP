@@ -1,22 +1,24 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { configEnvironment, initLocalConfig, loadLocalConfig, localConfigPath, type LocalConfig } from './config.js';
+import { APP_VERSION } from './version.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
 const scriptsDir = path.join(projectRoot, 'scripts');
 
-type Command = 'setup' | 'up' | 'down' | 'restart' | 'status' | 'doctor' | 'help';
+type Command = 'setup' | 'up' | 'down' | 'restart' | 'status' | 'doctor' | 'check' | 'config' | 'version' | 'help';
 
 export function usage(): string {
-  return `chatgpt-local\n\nUsage:\n  chatgpt-local setup\n  chatgpt-local up\n  chatgpt-local down\n  chatgpt-local restart\n  chatgpt-local status\n  chatgpt-local doctor\n\n`;
+  return `chatgpt-local ${APP_VERSION}\n\nUsage:\n  chatgpt-local setup\n  chatgpt-local up\n  chatgpt-local down\n  chatgpt-local restart\n  chatgpt-local status\n  chatgpt-local doctor\n  chatgpt-local check\n  chatgpt-local config [show|init|reset]\n  chatgpt-local version\n\n`;
 }
 
-export function run(program: string, args: string[], cwd = projectRoot): Promise<void> {
+export function run(program: string, args: string[], cwd = projectRoot, env?: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(program, args, { cwd, stdio: 'inherit', windowsHide: true });
+    const child = spawn(program, args, { cwd, stdio: 'inherit', windowsHide: true, env: { ...process.env, ...env } });
     child.once('error', reject);
     child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`${program} exited with code ${code ?? 'unknown'}`)));
   });
@@ -40,9 +42,9 @@ function script(name: string): { program: string; args: string[] } {
   return resolveScript(process.platform, scriptsDir, name);
 }
 
-async function runScript(name: string): Promise<void> {
+async function runScript(name: string, config = loadLocalConfig(projectRoot)): Promise<void> {
   const { program, args } = script(name);
-  await run(program, args);
+  await run(program, args, projectRoot, configEnvironment(config));
 }
 
 export function preflight(root: string): string[] {
@@ -60,10 +62,22 @@ export function preflight(root: string): string[] {
   return missing;
 }
 
+function serverArgs(config: LocalConfig): string[] {
+  return [
+    path.join(projectRoot, 'dist', 'index.js'),
+    '--root', config.workspaceRoot,
+    '--policy', config.policy,
+    '--approval-mode', config.approvalMode,
+    ...(config.accessMode === 'unrestricted' ? ['--dangerously-open-machine'] : []),
+  ];
+}
+
 async function setup(): Promise<void> {
+  const configFile = initLocalConfig(projectRoot);
+  const config = loadLocalConfig(projectRoot);
   const missing = preflight(projectRoot);
 
-  process.stdout.write(`chatgpt-local setup\nproject: ${projectRoot}\n`);
+  process.stdout.write(`chatgpt-local setup\nproject: ${projectRoot}\nconfig: ${configFile}\nworkspace: ${config.workspaceRoot}\naccess: ${config.accessMode}\n`);
   if (missing.length) {
     process.stdout.write(`missing: ${missing.join(', ')}\n\nSee README.md setup instructions, then run: chatgpt-local up\n`);
     process.exitCode = 1;
@@ -71,7 +85,28 @@ async function setup(): Promise<void> {
   }
   process.stdout.write('preflight: ok\n');
   await runNpm(['run', 'build']);
+  await run(process.execPath, [...serverArgs(config), '--check']);
   process.stdout.write('ready: run `chatgpt-local up`\n');
+}
+
+function showConfig(): void {
+  const config = loadLocalConfig(projectRoot);
+  process.stdout.write(JSON.stringify({ file: localConfigPath(projectRoot), ...config }, null, 2) + '\n');
+}
+
+function showSupervisorState(): void {
+  const file = path.join(projectRoot, '.chatgpt-machine', 'supervisor.json');
+  if (!existsSync(file)) {
+    process.stdout.write('supervisor: no local state\n');
+    return;
+  }
+  try {
+    const state = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    process.stdout.write(`supervisor: ${state.ready === true ? 'ready' : 'not-ready'} generation=${state.workerGeneration ?? '?'} restarts=${state.restarts ?? '?'} worker_pid=${state.workerPid ?? '?'}\n`);
+    if (state.lastRestartReason) process.stdout.write(`last_restart: ${String(state.lastRestartReason)}\n`);
+  } catch (error) {
+    process.stdout.write(`supervisor: state unreadable (${error instanceof Error ? error.message : String(error)})\n`);
+  }
 }
 
 async function main(): Promise<void> {
@@ -93,9 +128,30 @@ async function main(): Promise<void> {
       break;
     case 'status':
       await runScript('status-tunnel');
+      showSupervisorState();
       break;
-    case 'doctor':
-      await run(process.execPath, [path.join(projectRoot, 'dist', 'index.js'), '--doctor']);
+    case 'doctor': {
+      await runNpm(['run', 'build']);
+      const config = loadLocalConfig(projectRoot);
+      await run(process.execPath, [...serverArgs(config), '--doctor']);
+      break;
+    }
+    case 'check': {
+      await runNpm(['run', 'build']);
+      const config = loadLocalConfig(projectRoot);
+      await run(process.execPath, [...serverArgs(config), '--check']);
+      break;
+    }
+    case 'config': {
+      const action = process.argv[3] ?? 'show';
+      if (action === 'init') initLocalConfig(projectRoot);
+      else if (action === 'reset') initLocalConfig(projectRoot, true);
+      else if (action !== 'show') throw new Error('config action must be show, init, or reset.');
+      showConfig();
+      break;
+    }
+    case 'version':
+      process.stdout.write(`${APP_VERSION}\n`);
       break;
     case 'help':
     default:

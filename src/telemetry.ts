@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
+import { APP_VERSION } from './version.js';
 
-const tracer = trace.getTracer('chatgpt-machine-mcp', '0.4.0');
+const tracer = trace.getTracer('chatgpt-machine-mcp', APP_VERSION);
 
 export async function withToolSpan<T>(
   toolName: string,
@@ -27,3 +28,5 @@ export async function withToolSpan<T>(
     }
   });
 }
+
+

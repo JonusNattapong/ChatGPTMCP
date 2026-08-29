@@ -4,6 +4,8 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type { Tool } from '@modelcontextprotocol/server';
 import { AuditLogger, defaultAuditPath } from './audit.js';
+import { CONTRACT_VERSION, createContractManifest } from './contract.js';
+import { APP_VERSION } from './version.js';
 import { ToolError } from './errors.js';
 import {
   editMachineFile,
@@ -177,6 +179,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       inputSchema: { type: 'object', properties: { include: { type: 'array', items: { type: 'string', enum: ['git', 'project'] }, description: 'Optional bootstrap sections.' } } },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       handler: async (args) => {
+        const contract = createContractManifest(specs);
         const [git, ripgrep, bash, powershell] = await Promise.all([
           probeVersion('git', ['--version']),
           probeVersion('rg', ['--version']),
@@ -189,6 +192,13 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           return { name: pkg.name, scripts: Object.fromEntries(Object.entries(pkg.scripts ?? {}).filter(([name]) => ['dev', 'test', 'build', 'lint', 'start'].includes(name))) };
         }).catch(() => undefined) : undefined;
         return {
+          service: {
+            version: APP_VERSION,
+            contractVersion: CONTRACT_VERSION,
+            contractFingerprint: contract.fingerprint,
+            supervised: process.env.MCP_SUPERVISED === '1',
+            workerGeneration: process.env.MCP_WORKER_GENERATION ? Number(process.env.MCP_WORKER_GENERATION) : undefined,
+          },
           platform: process.platform,
           defaultWorkspace: context.root,
           accessMode: open ? 'UNRESTRICTED_MACHINE' : 'WORKSPACE_ONLY',

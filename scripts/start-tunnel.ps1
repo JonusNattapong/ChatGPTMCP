@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -7,7 +7,15 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $clientPath = Join-Path $projectRoot 'tools\tunnel-client-v0.0.13\tunnel-client.exe'
 $keyPath = Join-Path $projectRoot '.tunnel\control-plane-api-key.dpapi'
 $profileDir = Join-Path $env:APPDATA 'tunnel-client'
-$mcpCommand = 'node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine'
+$workspaceRoot = if ([string]::IsNullOrWhiteSpace($env:MCP_WORKSPACE_ROOT)) { Split-Path -Parent $projectRoot } else { $env:MCP_WORKSPACE_ROOT }
+$accessMode = if ([string]::IsNullOrWhiteSpace($env:MCP_ACCESS_MODE)) { 'unrestricted' } else { $env:MCP_ACCESS_MODE }
+$policy = if ([string]::IsNullOrWhiteSpace($env:MCP_POLICY)) { 'admin' } else { $env:MCP_POLICY }
+$approvalMode = if ([string]::IsNullOrWhiteSpace($env:MCP_APPROVAL_MODE)) { 'mrtr' } else { $env:MCP_APPROVAL_MODE }
+$supervisorTimeout = if ([string]::IsNullOrWhiteSpace($env:MCP_SUPERVISOR_TIMEOUT_MS)) { '120000' } else { $env:MCP_SUPERVISOR_TIMEOUT_MS }
+$supervisorPath = (Join-Path $projectRoot 'dist\supervisor.js').Replace('\', '/')
+$workspaceArg = $workspaceRoot.Replace('\', '/')
+$openArg = if ($accessMode -eq 'workspace') { '' } else { ' --dangerously-open-machine' }
+$mcpCommand = "node $supervisorPath --supervisor-timeout $supervisorTimeout --root `"$workspaceArg`" --policy $policy --approval-mode $approvalMode$openArg"
 
 if (-not (Test-Path -LiteralPath $clientPath)) {
     throw "Tunnel client not found: $clientPath"
@@ -57,3 +65,5 @@ finally {
         $secureKey.Dispose()
     }
 }
+
+

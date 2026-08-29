@@ -1,10 +1,11 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { constants as fsConstants } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
-import { readdir } from 'node:fs/promises';
+import { access, readdir } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import {
   acceptedContent,
@@ -24,11 +25,13 @@ import {
   type ApprovalRequestState,
 } from './approval-state.js';
 import { AuditLogger, defaultAuditPath, redactSecrets } from './audit.js';
+import { CONTRACT_VERSION, createContractManifest } from './contract.js';
 import { describeError, ToolError } from './errors.js';
-import { evaluatePolicy, loadPolicy, type PolicyConfig } from './policy.js';
+import { evaluatePolicy, loadPolicy, policyFingerprint, validatePolicyConfig, type PolicyConfig } from './policy.js';
 import { withToolSpan } from './telemetry.js';
 import { createToolSpecs, type ToolSpec } from './tools.js';
 import { IdempotencyStore } from './idempotency.js';
+import { APP_VERSION } from './version.js';
 
 interface Options {
   root: string;
@@ -157,7 +160,7 @@ function createMcpServer(runtime: Runtime): Server {
   });
   const byName = new Map<string, ToolSpec>(specs.map((spec) => [spec.name, spec]));
   const server = new Server(
-    { name: 'chatgpt-machine-mcp', version: '0.4.0' },
+    { name: 'chatgpt-machine-mcp', version: APP_VERSION },
     {
       capabilities: { tools: {}, prompts: { listChanged: false }, resources: { subscribe: true, listChanged: false }, completions: {}, logging: {} },
       cacheHints: {
@@ -356,7 +359,7 @@ function hasValidBearerToken(req: IncomingMessage, expectedToken?: string): bool
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-const AUDIT_UI = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5"><title>ChatGPT Machine MCP</title><style>body{font:14px ui-monospace,monospace;background:#101319;color:#dbe4f0;margin:2rem}h1{font:600 22px system-ui}table{width:100%;border-collapse:collapse}td,th{padding:.55rem;border-bottom:1px solid #293241;text-align:left}.success{color:#71d99e}.error{color:#ff7b86}</style></head><body><h1>ChatGPT Machine MCP · recent calls</h1><table><thead><tr><th>Time</th><th>Tool</th><th>Decision</th><th>Status</th><th>Duration</th></tr></thead><tbody id="rows"></tbody></table><script>fetch('/ui/audit').then(r=>r.json()).then(({records})=>{rows.innerHTML=records.reverse().map(x=>'<tr><td>'+x.timestamp+'</td><td>'+x.tool+'</td><td>'+x.decision+'</td><td class="'+x.status+'">'+x.status+'</td><td>'+x.durationMs+' ms</td></tr>').join('')}).catch(e=>rows.innerHTML='<tr><td colspan=5>'+e+'</td></tr>')</script></body></html>`;
+const AUDIT_UI = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5"><title>ChatGPT Machine MCP</title><style>body{font:14px ui-monospace,monospace;background:#101319;color:#dbe4f0;margin:2rem}h1{font:600 22px system-ui}table{width:100%;border-collapse:collapse}td,th{padding:.55rem;border-bottom:1px solid #293241;text-align:left}.success{color:#71d99e}.error{color:#ff7b86}</style></head><body><h1>ChatGPT Machine MCP Â· recent calls</h1><table><thead><tr><th>Time</th><th>Tool</th><th>Decision</th><th>Status</th><th>Duration</th></tr></thead><tbody id="rows"></tbody></table><script>fetch('/ui/audit').then(r=>r.json()).then(({records})=>{rows.innerHTML=records.reverse().map(x=>'<tr><td>'+x.timestamp+'</td><td>'+x.tool+'</td><td>'+x.decision+'</td><td class="'+x.status+'">'+x.status+'</td><td>'+x.durationMs+' ms</td></tr>').join('')}).catch(e=>rows.innerHTML='<tr><td colspan=5>'+e+'</td></tr>')</script></body></html>`;
 
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
@@ -366,11 +369,42 @@ async function main(): Promise<void> {
     key: randomBytes(32),
     ttlSeconds: 5 * 60,
   });
+  const validationSpecs = createToolSpecs({ root: options.root, unrestricted: options.dangerouslyOpenMachine, maxTimeoutMs: options.maxTimeoutMs, policyName: policy.name, approvalMode: options.approvalMode, audit });
+  validatePolicyConfig(policy, validationSpecs.map((spec) => spec.name));
   const runtime: Runtime = { options, policy, audit, approvalState, idempotency: new IdempotencyStore() };
   if (options.doctor) {
-    const specs = createToolSpecs({ root: options.root, unrestricted: options.dangerouslyOpenMachine, maxTimeoutMs: options.maxTimeoutMs, policyName: policy.name, approvalMode: options.approvalMode, audit });
-    const checks = await Promise.all(['node', 'git', 'bash'].map(async (command) => ({ command, available: command === 'node' || await new Promise<boolean>((resolve) => { const probe = spawn(command, ['--version'], { stdio: 'ignore' }); probe.once('error', () => resolve(false)); probe.once('close', (code) => resolve(code === 0)); }) })));
-    process.stdout.write(JSON.stringify({ ok: checks.every((check) => check.available), root: options.root, checks, tools: specs.length, hint: 'Install missing dependencies, then rerun --doctor.' }, null, 2) + '\n');
+    const specs = validationSpecs;
+    const contract = createContractManifest(specs);
+    const commands = process.platform === 'win32'
+      ? [{ command: 'git', args: ['--version'] }, { command: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'] }]
+      : [{ command: 'git', args: ['--version'] }, { command: 'bash', args: ['--version'] }];
+    const checks = await Promise.all(commands.map(async ({ command, args }) => ({
+      command,
+      available: await new Promise<boolean>((resolve) => {
+        const probe = spawn(command, args, { stdio: 'ignore', windowsHide: true });
+        probe.once('error', () => resolve(false));
+        probe.once('close', (code) => resolve(code === 0));
+      }),
+    })));
+    const workspace = {
+      readable: await access(options.root, fsConstants.R_OK).then(() => true, () => false),
+      writable: await access(options.root, fsConstants.W_OK).then(() => true, () => false),
+    };
+    process.stdout.write(JSON.stringify({
+      ok: checks.every((check) => check.available) && workspace.readable && workspace.writable,
+      version: APP_VERSION,
+      platform: process.platform,
+      root: options.root,
+      workspace,
+      supervised: process.env.MCP_SUPERVISED === '1',
+      checks,
+      tools: specs.length,
+      contractVersion: CONTRACT_VERSION,
+      contractFingerprint: contract.fingerprint,
+      policy: policy.name,
+      policyFingerprint: policyFingerprint(policy),
+      hint: 'Install missing dependencies or fix workspace permissions, then rerun --doctor.',
+    }, null, 2) + '\n');
     return;
   }
   if (options.check) {
@@ -382,8 +416,12 @@ async function main(): Promise<void> {
       approvalMode: options.approvalMode,
       audit,
     });
+    const contract = createContractManifest(specs);
     process.stdout.write(JSON.stringify({
       ok: true,
+      version: APP_VERSION,
+      contractVersion: CONTRACT_VERSION,
+      contractFingerprint: contract.fingerprint,
       root: options.root,
       accessMode: options.dangerouslyOpenMachine ? 'UNRESTRICTED_MACHINE' : 'WORKSPACE_ONLY',
       transport: options.http ? 'streamable-http' : 'stdio',
@@ -399,6 +437,7 @@ async function main(): Promise<void> {
 
   let closeMcp: (() => Promise<void>) | undefined;
   let closeHttpServer: (() => Promise<void>) | undefined;
+  let httpReady = false;
 
   if (options.http) {
     const handler = createMcpHandler(() => createMcpServer(runtime), {
@@ -420,10 +459,14 @@ async function main(): Promise<void> {
       }
       const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
       if ((pathname === '/healthz' || pathname === '/readyz') && req.method === 'GET') {
-        res.writeHead(200, { 'content-type': 'application/json' });
+        const ready = pathname === '/healthz' ? true : httpReady;
+        res.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
         res.end(JSON.stringify({
-          ok: true,
+          ok: ready,
           service: 'chatgpt-machine-mcp',
+          version: APP_VERSION,
+          contractVersion: CONTRACT_VERSION,
+          status: pathname === '/healthz' ? 'alive' : (ready ? 'ready' : 'starting'),
           accessMode: options.dangerouslyOpenMachine ? 'UNRESTRICTED_MACHINE' : 'WORKSPACE_ONLY',
           endpoint: '/mcp',
         }));
@@ -461,6 +504,7 @@ async function main(): Promise<void> {
       httpServer.once('error', reject);
       httpServer.listen(options.httpPort, options.httpHost, resolve);
     });
+    httpReady = true;
     console.error(`[chatgpt-machine-mcp] listening at http://${options.httpHost}:${options.httpPort}/mcp`);
     console.error(`[chatgpt-machine-mcp] access mode: ${options.dangerouslyOpenMachine ? 'UNRESTRICTED_MACHINE' : 'WORKSPACE_ONLY'}`);
     console.error(`[chatgpt-machine-mcp] policy: ${policy.name} (approval=${options.approvalMode})`);
@@ -477,6 +521,7 @@ async function main(): Promise<void> {
   }
 
   const cleanup = async () => {
+    httpReady = false;
     await closeMcp?.();
     await closeHttpServer?.();
     process.exit(0);
@@ -491,3 +536,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1);
   });
 }
+
+
+
+

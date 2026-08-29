@@ -1,3 +1,4 @@
+﻿import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ToolSpec } from './tools.js';
@@ -221,13 +222,36 @@ function extractPaths(toolName: string, args: Record<string, unknown>, root: str
 }
 
 function matchesAnyPattern(command: string, patterns: string[] | undefined): boolean {
-  return patterns?.some((pattern) => {
+  return patterns?.some((pattern) => new RegExp(pattern, 'i').test(command)) ?? false;
+}
+
+function validateRegexPatterns(patterns: string[] | undefined, label: string): void {
+  for (const pattern of patterns ?? []) {
     try {
-      return new RegExp(pattern, 'i').test(command);
-    } catch {
-      return command.toLowerCase().includes(pattern.toLowerCase());
+      new RegExp(pattern, 'i');
+    } catch (error) {
+      throw new Error(`${label} contains invalid regular expression ${JSON.stringify(pattern)}: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }) ?? false;
+  }
+}
+
+export function validatePolicyConfig(policy: PolicyConfig, toolNames: Iterable<string>): void {
+  const known = new Set(toolNames);
+  for (const [label, names] of [
+    ['tools.allow', policy.tools.allow],
+    ['tools.deny', policy.tools.deny],
+    ['tools.approvalRequired', policy.tools.approvalRequired],
+  ] as const) {
+    for (const name of names ?? []) {
+      if (!known.has(name)) throw new Error(`${label} references unknown tool: ${name}`);
+    }
+  }
+  validateRegexPatterns(policy.shell.allow, 'shell.allow');
+  validateRegexPatterns(policy.shell.deny, 'shell.deny');
+}
+
+export function policyFingerprint(policy: PolicyConfig): string {
+  return createHash('sha256').update(JSON.stringify(policy)).digest('hex');
 }
 
 export function evaluatePolicy(
@@ -286,3 +310,4 @@ export function evaluatePolicy(
     requiresApproval: policy.tools.approvalRequired.includes(spec.name),
   };
 }
+
