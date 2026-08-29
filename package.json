@@ -1,6 +1,6 @@
 {
     "name": "chatgpt-machine-mcp",
-    "version": "0.9.0",
+    "version": "1.0.0",
     "description": "Local MCP bridge that lets trusted ChatGPT clients operate a machine through explicit MCP tools",
     "type": "module",
     "main": "dist/index.js",
