@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   editMachineFile,
+  editMachineFileTransaction,
   fileInfo,
   findFiles,
   imageInfo,
@@ -72,6 +73,19 @@ test('edit_file rejects ambiguous replacements unless replace_all is true', asyn
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('transactional edit_file validates every edit before writing', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'machine-mcp-transaction-'));
+  const access = { root, unrestricted: false };
+  try {
+    await writeMachineFile({ ...access, filePath: 'example.txt', content: 'one\ntwo\n' });
+    await assert.rejects(editMachineFileTransaction({ ...access, filePath: 'example.txt', edits: [{ oldText: 'one', newText: 'ONE' }, { oldText: 'missing', newText: 'X' }] }), /not found/);
+    assert.equal(await readFile(path.join(root, 'example.txt'), 'utf8'), 'one\ntwo\n');
+    const result = await editMachineFileTransaction({ ...access, filePath: 'example.txt', edits: [{ oldText: 'one', newText: 'ONE' }, { oldText: 'two', newText: 'TWO' }] });
+    assert.equal(result.replacements, 2);
+    assert.equal(await readFile(path.join(root, 'example.txt'), 'utf8'), 'ONE\nTWO\n');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('file tools enforce the workspace boundary', async () => {

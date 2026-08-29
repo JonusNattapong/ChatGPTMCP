@@ -17,6 +17,10 @@ export interface AuditRecord {
 
 const SECRET_KEY = /(password|passwd|secret|token|authorization|cookie|credential|api[_-]?key|private[_-]?key)/i;
 const LARGE_TEXT_KEY = /^(content|old_text|new_text|patch|stdin)$/i;
+const SECRET_VALUE = /\b(?:sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{12,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b/g;
+
+/** Redact common credentials from output before it crosses the tunnel boundary. */
+export function redactSecrets(value: string): string { return value.replace(SECRET_VALUE, '[REDACTED_SECRET]'); }
 
 function digestText(value: string): string {
   const hash = createHash('sha256').update(value).digest('hex').slice(0, 16);

@@ -5,6 +5,7 @@ import { AuditLogger, defaultAuditPath } from './audit.js';
 import { ToolError } from './errors.js';
 import {
   editMachineFile,
+  editMachineFileTransaction,
   fileInfo,
   findFiles,
   imageInfo,
@@ -469,7 +470,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
     },
     {
       name: 'edit_file',
-      description: 'Replace exact text in an existing UTF-8 file. Ambiguous matches are rejected unless "replace_all" or "expected_replacements" is given, and a failed match reports whitespace-insensitive near misses so the call can be corrected.',
+      description: 'Replace exact text in an existing UTF-8 file. Supply either old_text/new_text or an edits array. Array edits are validated in memory then written atomically, so a failed edit never leaves a partial file.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -480,20 +481,23 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           expected_replacements: { type: 'integer', minimum: 1, description: 'Require exactly this many occurrences.' },
           expected_sha256: EXPECTED_SHA256_PROPERTY,
           dry_run: { type: 'boolean', description: 'Report what would change without writing the file.' },
+          edits: { type: 'array', minItems: 1, items: { type: 'object', properties: { old_text: { type: 'string' }, new_text: { type: 'string' }, replace_all: { type: 'boolean' }, expected_replacements: { type: 'integer', minimum: 1 } }, required: ['old_text', 'new_text'] }, description: 'Transactional sequence of edits; all succeed or none are written.' },
         },
-        required: ['path', 'old_text', 'new_text'],
+        required: ['path'],
       },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-      handler: async (args) => editMachineFile({
-        ...access,
-        filePath: requireString(args, 'path'),
-        oldText: requireText(args, 'old_text'),
-        newText: requireText(args, 'new_text'),
-        replaceAll: optionalBoolean(args, 'replace_all'),
-        expectedReplacements: optionalInteger(args, 'expected_replacements'),
-        expectedSha256: optionalString(args, 'expected_sha256'),
-        dryRun: optionalBoolean(args, 'dry_run'),
-      }),
+      handler: async (args) => {
+        const common = { ...access, filePath: requireString(args, 'path'), expectedSha256: optionalString(args, 'expected_sha256'), dryRun: optionalBoolean(args, 'dry_run') };
+        if (args.edits !== undefined) {
+          if (!Array.isArray(args.edits)) throw new ToolError('INVALID_ARGUMENT', '"edits" must be an array.');
+          return editMachineFileTransaction({ ...common, edits: args.edits.map((item, index) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) throw new ToolError('INVALID_ARGUMENT', `edits[${index}] must be an object.`);
+            const edit = item as Record<string, unknown>;
+            return { oldText: requireText(edit, 'old_text'), newText: requireText(edit, 'new_text'), replaceAll: optionalBoolean(edit, 'replace_all'), expectedReplacements: optionalInteger(edit, 'expected_replacements') };
+          }) });
+        }
+        return editMachineFile({ ...common, oldText: requireText(args, 'old_text'), newText: requireText(args, 'new_text'), replaceAll: optionalBoolean(args, 'replace_all'), expectedReplacements: optionalInteger(args, 'expected_replacements') });
+      },
     },
     {
       name: 'update_file',

@@ -14,6 +14,7 @@ export type ToolErrorCode =
   | 'NOT_A_DIRECTORY'
   | 'PATH_DENIED'
   | 'PRECONDITION_FAILED'
+  | 'IDEMPOTENCY_CONFLICT'
   | 'AMBIGUOUS_MATCH'
   | 'NO_MATCH'
   | 'TOO_LARGE'

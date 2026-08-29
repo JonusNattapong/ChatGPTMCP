@@ -68,6 +68,13 @@ export interface EditFileOptions extends MachineAccess {
   dryRun?: boolean;
 }
 
+export interface TransactionalEdit {
+  oldText: string;
+  newText: string;
+  replaceAll?: boolean;
+  expectedReplacements?: number;
+}
+
 export interface UpdateFileOptions extends MachineAccess {
   filePath: string;
   startLine: number;
@@ -630,6 +637,29 @@ export async function editMachineFile(options: EditFileOptions) {
     bytes: Buffer.byteLength(content),
     sha256: hashText(content),
   };
+}
+
+/** Validate every replacement in memory, then make one write: no partial edit. */
+export async function editMachineFileTransaction(options: Omit<EditFileOptions, 'oldText' | 'newText' | 'replaceAll' | 'expectedReplacements'> & { edits: TransactionalEdit[] }) {
+  if (!Array.isArray(options.edits) || options.edits.length === 0) throw new ToolError('INVALID_ARGUMENT', '"edits" must contain at least one edit.');
+  const file = await loadTextFile(options, options.filePath);
+  assertExpectedSha256(options.expectedSha256, file.sha256, options.filePath);
+  let content = file.content;
+  const applied: Array<{ replacements: number; firstReplacedLine: number }> = [];
+  for (let index = 0; index < options.edits.length; index++) {
+    const edit = options.edits[index]!;
+    if (!edit.oldText) throw new ToolError('INVALID_ARGUMENT', `edits[${index}].old_text must not be empty.`, undefined, { failedEditIndex: index });
+    const occurrences = content.split(edit.oldText).length - 1;
+    if (occurrences === 0) throw new ToolError('NO_MATCH', `edits[${index}].old_text was not found.`, 'Copy the text verbatim from read_file output.', { failedEditIndex: index, nearMisses: nearMissCandidates(content.replace(/\r\n/g, '\n').split('\n'), edit.oldText) });
+    if (edit.expectedReplacements !== undefined && occurrences !== edit.expectedReplacements) throw new ToolError('PRECONDITION_FAILED', `edits[${index}] occurs ${occurrences} times, expected ${edit.expectedReplacements}.`, undefined, { failedEditIndex: index, occurrences });
+    if (!edit.replaceAll && edit.expectedReplacements === undefined && occurrences !== 1) throw new ToolError('AMBIGUOUS_MATCH', `edits[${index}].old_text occurs ${occurrences} times.`, 'Set replace_all or expected_replacements.', { failedEditIndex: index, occurrences });
+    const replaceAll = edit.replaceAll || (edit.expectedReplacements ?? 0) > 1;
+    applied.push({ replacements: replaceAll ? occurrences : 1, firstReplacedLine: lineOfOffset(content, content.indexOf(edit.oldText)) });
+    content = replaceAll ? content.split(edit.oldText).join(edit.newText) : content.replace(edit.oldText, edit.newText);
+  }
+  const result = { path: file.absolutePath, dryRun: options.dryRun === true, edits: applied, replacements: applied.reduce((sum, item) => sum + item.replacements, 0), sha256: hashText(content), bytes: Buffer.byteLength(content) };
+  if (!options.dryRun) await writeFile(file.absolutePath, content, 'utf8');
+  return result;
 }
 
 export async function updateMachineFile(options: UpdateFileOptions) {

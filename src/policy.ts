@@ -193,6 +193,13 @@ function isInside(candidate: string, root: string): boolean {
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
+/** Never expose private keys or environment files through the remote bridge. */
+function isProtectedSecretPath(candidate: string): boolean {
+  const parts = candidate.replace(/\\/g, '/').toLowerCase().split('/');
+  const base = parts.at(-1) ?? '';
+  return parts.includes('.ssh') || base === '.env' || base.startsWith('.env.') || /\.(pem|key|p12|pfx)$/i.test(base) || base === 'id_rsa' || base === 'id_ed25519';
+}
+
 function normalizedRoots(values: string[] | undefined, root: string): string[] | undefined {
   return values?.map((value) => path.resolve(root, value));
 }
@@ -253,6 +260,9 @@ export function evaluatePolicy(
   }
 
   const candidates = extractPaths(spec.name, args, root);
+  if (candidates.some(isProtectedSecretPath)) {
+    return { allowed: false, requiresApproval: false, reason: 'Secret-bearing paths (.env, .ssh, private keys) are always denied by the machine bridge.' };
+  }
   const deniedRoots = normalizedRoots(policy.filesystem.deny, root) ?? [];
   for (const candidate of candidates) {
     if (deniedRoots.some((denied) => isInside(candidate, denied))) {

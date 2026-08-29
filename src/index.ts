@@ -20,11 +20,12 @@ import {
   matchesApprovalRequestState,
   type ApprovalRequestState,
 } from './approval-state.js';
-import { AuditLogger, defaultAuditPath } from './audit.js';
+import { AuditLogger, defaultAuditPath, redactSecrets } from './audit.js';
 import { describeError, ToolError } from './errors.js';
 import { evaluatePolicy, loadPolicy, type PolicyConfig } from './policy.js';
 import { withToolSpan } from './telemetry.js';
 import { createToolSpecs, type ToolSpec } from './tools.js';
+import { IdempotencyStore } from './idempotency.js';
 
 interface Options {
   root: string;
@@ -45,6 +46,7 @@ interface Runtime {
   policy: PolicyConfig;
   audit: AuditLogger;
   approvalState: RequestStateCodec<ApprovalRequestState>;
+  idempotency: IdempotencyStore;
 }
 
 function valueAfter(args: string[], index: number, flag: string): string {
@@ -117,7 +119,7 @@ export function parseOptions(args: string[]): Options {
 
 function textResult(value: unknown, isError = false) {
   return {
-    content: [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
+    content: [{ type: 'text' as const, text: redactSecrets(typeof value === 'string' ? value : JSON.stringify(value, null, 2)) }],
     ...(isError ? { isError: true } : {}),
   };
 }
@@ -135,7 +137,7 @@ function errorResult(toolName: string, error: unknown) {
 }
 
 function createMcpServer(runtime: Runtime): Server {
-  const { options, policy, audit, approvalState } = runtime;
+  const { options, policy, audit, approvalState, idempotency } = runtime;
   const specs = createToolSpecs({
     root: options.root,
     unrestricted: options.dangerouslyOpenMachine,
@@ -181,7 +183,14 @@ function createMcpServer(runtime: Runtime): Server {
         },
       }, true);
     }
-    const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+    const suppliedArgs = (request.params.arguments ?? {}) as Record<string, unknown>;
+    const key = suppliedArgs.idempotency_key;
+    if (key !== undefined && (typeof key !== 'string' || key.length < 8 || key.length > 128)) return errorResult(name, new ToolError('INVALID_ARGUMENT', 'idempotency_key must be a string between 8 and 128 characters.'));
+    const args = Object.fromEntries(Object.entries(suppliedArgs).filter(([arg]) => arg !== 'idempotency_key'));
+    if (typeof key === 'string') {
+      const cached = idempotency.lookup(key, name, args);
+      if (cached !== undefined) return cached as ReturnType<typeof textResult>;
+    }
     return withToolSpan(name, {
       'mcp.tool.name': name,
       'mcp.tool.read_only': spec.annotations.readOnlyHint,
@@ -253,7 +262,9 @@ function createMcpServer(runtime: Runtime): Server {
           args,
           errorCode: failed ? 'COMMAND_FAILED' : undefined,
         });
-        return failed ? textResult({ ok: false, ...(result as Record<string, unknown>) }, true) : successResult(result);
+        const response = failed ? textResult({ ok: false, ...(result as Record<string, unknown>) }, true) : successResult(result);
+        if (typeof key === 'string') idempotency.store(key, name, args, response);
+        return response;
       } catch (error: unknown) {
         const described = describeError(error);
         await audit.write({ traceId, tool: name, policy: policy.name, decision: decision.requiresApproval ? 'approval_required' : 'allowed', status: 'error', durationMs: Date.now() - startedAt, args, errorCode: described.code });
@@ -299,7 +310,7 @@ async function main(): Promise<void> {
     key: randomBytes(32),
     ttlSeconds: 5 * 60,
   });
-  const runtime: Runtime = { options, policy, audit, approvalState };
+  const runtime: Runtime = { options, policy, audit, approvalState, idempotency: new IdempotencyStore() };
   if (options.check) {
     const specs = createToolSpecs({
       root: options.root,
