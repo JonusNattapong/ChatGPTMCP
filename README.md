@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/machine-mcp-logo.svg" alt="ChatGPT Machine MCP" width="760" />
+</p>
+
 # ChatGPT Machine MCP
 
 **English** | [ไทย](README.th.md)

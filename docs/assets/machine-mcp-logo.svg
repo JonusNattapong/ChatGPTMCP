@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Machine MCP</title>
+  <desc id="desc">Minimal monochrome Machine MCP logo with a folded M mark.</desc>
+  <defs>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.45" stop-color="#d8d8dc"/>
+      <stop offset="1" stop-color="#73737c"/>
+    </linearGradient>
+    <linearGradient id="metalDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#777780"/>
+      <stop offset="1" stop-color="#25252a"/>
+    </linearGradient>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="420" rx="32" fill="#070708"/>
+  <g transform="translate(90 72)" filter="url(#softGlow)">
+    <path d="M20 242V36c0-14 15-23 27-15l112 74 112-74c12-8 27 1 27 15v206c0 11-9 20-20 20h-34V99l-85 56L74 99v163H40c-11 0-20-9-20-20Z" fill="url(#metalDark)"/>
+    <path d="M54 28c-13-8-29 1-29 16v46l134 88 134-88V44c0-15-16-24-29-16l-105 69L54 28Z" fill="url(#metal)"/>
+    <path d="M159 97 86 49v49l73 48 73-48V49l-73 48Z" fill="#0d0d10" opacity=".72"/>
+  </g>
+
+  <g transform="translate(430 126)">
+    <text x="0" y="84" fill="#f5f5f7" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="86" font-weight="650" letter-spacing="12">MACHINE</text>
+    <g transform="translate(2 122)">
+      <rect x="0" y="0" width="228" height="58" rx="29" fill="#f1f1f3"/>
+      <text x="114" y="40" text-anchor="middle" fill="#08080a" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="31" font-weight="760" letter-spacing="10">MCP</text>
+      <text x="268" y="39" fill="#8d8d94" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="500" letter-spacing="6">LOCAL MACHINE BRIDGE</text>
+    </g>
+  </g>
+</svg>
