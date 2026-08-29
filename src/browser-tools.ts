@@ -241,18 +241,28 @@ export async function browserOpen(access: BrowserAccess, opts: { url: string; wa
     await ws.send('Runtime.enable');
     const deadline = Date.now() + (opts.waitMs ?? DEFAULT_NAV_TIMEOUT_MS);
     let readyState = 'loading';
+    let currentUrl = 'about:blank';
     while (Date.now() < deadline) {
-      const outcome = await evaluate(ws, 'document.readyState');
-      readyState = typeof outcome.value === 'string' ? outcome.value : readyState;
-      if (readyState === 'complete') break;
+      const [stateOutcome, urlOutcome] = await Promise.all([
+        evaluate(ws, 'document.readyState'),
+        evaluate(ws, 'location.href'),
+      ]);
+      readyState = typeof stateOutcome.value === 'string' ? stateOutcome.value : readyState;
+      currentUrl = typeof urlOutcome.value === 'string' ? urlOutcome.value : currentUrl;
+      // A newly-created CDP target briefly exposes its initial about:blank
+      // document as complete before the requested navigation starts. Do not
+      // mistake that initial document for the destination page.
+      const navigationStarted = url.href === 'about:blank' || currentUrl !== 'about:blank';
+      if (navigationStarted && readyState === 'complete') break;
       await new Promise((resolve) => setTimeout(resolve, NAV_POLL_INTERVAL_MS));
     }
     const titleOutcome = await evaluate(ws, 'document.title');
     const urlOutcome = await evaluate(ws, 'location.href');
+    currentUrl = typeof urlOutcome.value === 'string' ? urlOutcome.value : currentUrl;
     tabs.set(created.id, { ws, targetId: created.id });
     return {
       tabId: created.id,
-      url: typeof urlOutcome.value === 'string' ? urlOutcome.value : url.href,
+      url: currentUrl,
       title: typeof titleOutcome.value === 'string' ? titleOutcome.value : '',
       readyState,
       timedOut: readyState !== 'complete',

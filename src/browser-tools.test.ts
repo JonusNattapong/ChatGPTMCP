@@ -95,6 +95,7 @@ test('browser lifecycle: open, read, type, click, eval, screenshot, close', asyn
   const html = 'data:text/html,' + encodeURIComponent('<html><body><h1 id="title">Hello</h1><input id="box"><button id="go">Go</button><script>document.getElementById("go").onclick=()=>{document.getElementById("title").textContent="Clicked"}</script></body></html>');
   const tab = await browserOpen(access, { url: html, waitMs: 5_000 });
   assert.ok(tab.tabId);
+  assert.equal(tab.url, html);
   assert.equal(tab.timedOut, false);
 
   try {
