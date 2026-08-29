@@ -7,7 +7,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $clientPath = Join-Path $projectRoot 'tools\tunnel-client-v0.0.13\tunnel-client.exe'
 $keyPath = Join-Path $projectRoot '.tunnel\control-plane-api-key.dpapi'
 $profileDir = Join-Path $env:APPDATA 'tunnel-client'
-$mcpCommand = 'node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine --enable-browser'
+$mcpCommand = 'node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine'
 
 if (-not (Test-Path -LiteralPath $clientPath)) {
     throw "Tunnel client not found: $clientPath"
@@ -18,14 +18,17 @@ if (-not (Test-Path -LiteralPath $keyPath)) {
 }
 
 $secureKey = $null
-$runtimeKey = $null
+$runtimeKey = $env:CONTROL_PLANE_API_KEY
 
 try {
-    $cipherText = Get-Content -LiteralPath $keyPath -Raw
-    $secureKey = ConvertTo-SecureString $cipherText
-    $runtimeKey = [Net.NetworkCredential]::new('', $secureKey).Password
+    if ([string]::IsNullOrWhiteSpace($runtimeKey)) {
+        Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+        $cipherText = Get-Content -LiteralPath $keyPath -Raw
+        $secureKey = ConvertTo-SecureString $cipherText
+        $runtimeKey = [Net.NetworkCredential]::new('', $secureKey).Password
+    }
 
-    if (-not $runtimeKey.StartsWith('sk-')) {
+    if ([string]::IsNullOrWhiteSpace($runtimeKey) -or -not $runtimeKey.StartsWith('sk-')) {
         throw 'The DPAPI file did not decrypt to a valid runtime API key.'
     }
 

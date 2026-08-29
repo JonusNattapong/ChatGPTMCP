@@ -16,7 +16,7 @@ export interface AuditRecord {
 }
 
 const SECRET_KEY = /(password|passwd|secret|token|authorization|cookie|credential|api[_-]?key|private[_-]?key)/i;
-const LARGE_TEXT_KEY = /^(content|old_text|new_text|patch|stdin)$/i;
+const LARGE_TEXT_KEY = /^(content|old_text|new_text|patch|stdin|input|text|expression)$/i;
 const SECRET_VALUE = /\b(?:sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{12,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b/g;
 
 /** Redact common credentials from output before it crosses the tunnel boundary. */
@@ -33,13 +33,36 @@ export function redactCommandForStorage(value: string): string {
     .slice(0, 2000);
 }
 
+function redactUrlForStorage(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return digestText(value);
+  }
+
+  if (url.protocol === 'data:' || url.protocol === 'blob:') return `[${url.protocol.slice(0, -1)} URL ${digestText(value)}]`;
+  if (url.protocol === 'about:') return url.href.slice(0, 2000);
+
+  url.username = '';
+  url.password = '';
+  url.hash = '';
+  for (const key of [...new Set(url.searchParams.keys())]) {
+    url.searchParams.delete(key);
+    url.searchParams.append(key, '[REDACTED]');
+  }
+  return redactSecrets(url.href).slice(0, 2000);
+}
+
 function sanitize(value: unknown, key = '', depth = 0): unknown {
   if (depth > 5) return '[max-depth]';
   if (SECRET_KEY.test(key)) return '[REDACTED]';
   if (typeof value === 'string') {
     if (LARGE_TEXT_KEY.test(key)) return digestText(value);
     if (key === 'command') return redactCommandForStorage(value);
-    return value.length > 2000 ? `${value.slice(0, 2000)}…` : value;
+    if (key === 'url') return redactUrlForStorage(value);
+    const redacted = redactSecrets(value);
+    return redacted.length > 2000 ? `${redacted.slice(0, 2000)}…` : redacted;
   }
   if (Array.isArray(value)) return value.slice(0, 100).map((entry) => sanitize(entry, key, depth + 1));
   if (value && typeof value === 'object') {

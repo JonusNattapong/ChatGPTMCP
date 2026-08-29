@@ -82,6 +82,10 @@ test('audit log redacts secrets and hashes large mutation payloads', async () =>
         command: 'deploy --token super-secret-value',
         content: 'payload that should not be copied verbatim',
         apiKey: 'another-secret',
+        text: 'sensitive-text-value',
+        expression: 'window.secret = "expression-secret"',
+        input: 'process-input-secret',
+        url: 'https://user:pass@example.com/path?token=query-secret&mode=debug#fragment-secret',
       },
     });
 
@@ -89,6 +93,11 @@ test('audit log redacts secrets and hashes large mutation payloads', async () =>
     assert.doesNotMatch(text, /super-secret-value/);
     assert.doesNotMatch(text, /another-secret/);
     assert.doesNotMatch(text, /payload that should not be copied verbatim/);
+    assert.doesNotMatch(text, /sensitive-text-value/);
+    assert.doesNotMatch(text, /expression-secret/);
+    assert.doesNotMatch(text, /process-input-secret/);
+    assert.doesNotMatch(text, /query-secret|fragment-secret|user:pass/);
+    assert.ok(text.includes('example.com/path'));
     assert.match(text, /REDACTED/);
     assert.match(text, /sha256:/);
     assert.equal((await logger.recent(10)).length, 1);

@@ -202,7 +202,7 @@ Current local integration:
 ```text
 runtime alias:   chatgpt-machine
 runtime profile: chatgpt-machine-runtime
-MCP command:     node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine --enable-browser
+MCP command:     node D:/Projects/Github/ChatGPTMCP/dist/index.js --root D:/Projects/Github --dangerously-open-machine
 ```
 
 Helper scripts:
@@ -219,9 +219,6 @@ The runtime key file under `.tunnel/` is machine-local and Git-ignored. `start-t
 
 Avoid changing tunnel IDs, organization IDs, aliases, or profiles unless the task explicitly concerns tunnel provisioning.
 
-Browser control is enabled for the tunnel but keeps the default loopback-only
-origin allowlist. Add explicit `--browser-allow-origin <hostname>` entries when
-external navigation is required; do not silently broaden it to every host.
 
 ## Security review checklist
 

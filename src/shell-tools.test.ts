@@ -28,7 +28,7 @@ test('unrestricted mode accepts an absolute working directory outside root', asy
       root,
       unrestricted: true,
       workdir: outside,
-      // Browser lifecycle tests may launch Edge in parallel on Windows CI,
+      // Other integration tests may launch child processes in parallel on Windows CI,
       // where a cold Node child can take longer than ten seconds to start.
       timeoutMs: 30_000,
     });

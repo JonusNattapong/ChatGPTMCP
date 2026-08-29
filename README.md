@@ -90,18 +90,6 @@ Test with:
 
 After changing MCP code: run `npm run build`, stop/start the tunnel, and refresh the connector so ChatGPT receives the latest tool schema.
 
-The helper scripts start the MCP server with Browser mode enabled. By default,
-`browser_open` may navigate only to `localhost` and `127.0.0.1`, which is enough
-to inspect and operate development sites running on this machine. To permit an
-external site, append `--browser-allow-origin example.com` to the MCP command in
-the platform's `start-tunnel` script, restart the tunnel, and refresh the ChatGPT
-connector. Repeat the option for each additional hostname.
-
-Test Browser mode from ChatGPT with:
-
-```text
-ใช้ browser_open เปิด http://127.0.0.1:<port> แล้วใช้ browser_read อ่าน title โดยยังไม่คลิกหรือกรอกข้อมูล
-```
 
 Useful local checks:
 
