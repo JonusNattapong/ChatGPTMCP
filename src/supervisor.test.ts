@@ -204,10 +204,14 @@ test('killProcessTree handles undefined and invalid pid safely', () => {
 test('supervisor proxies the real MCP server during normal use', async () => {
   const distDirectory = path.dirname(fileURLToPath(import.meta.url));
   const root = await mkdtemp(path.join(tmpdir(), 'machine-supervisor-real-'));
+  const stateFile = path.join(root, 'supervisor.json');
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(distDirectory, 'supervisor.js'), '--root', root, '--dangerously-open-machine'],
-    env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+    env: {
+      ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+      MCP_SUPERVISOR_STATE_FILE: stateFile,
+    },
     stderr: 'pipe',
   });
   const client = new Client({ name: 'supervisor-real-smoke', version: '1.0.0' }, { versionNegotiation: { mode: 'auto' } });

@@ -94,6 +94,8 @@ chatgpt-local version
 
 ฝั่ง tunnel จะเข้า MCP ผ่าน `dist/supervisor.js` ซึ่งรัน `dist/index.js` เป็น worker แยก process หาก worker crash หรือค้างเกิน hard deadline supervisor จะคืน recoverable error, restart worker, replay MCP initialization และรักษา tunnel process หลักไว้ `chatgpt-local status` จะแสดง worker generation และจำนวน restart จาก `.chatgpt-machine/supervisor.json` ด้วย
 
+ขณะ tunnel ทำงาน watchdog บนเครื่องจะตรวจ managed runtime ทุก 15 วินาที หาก status ล้มเหลวติดต่อกัน 2 ครั้ง จะ reconnect tunnel และเก็บ diagnostics แบบจำกัดขนาดไว้ที่ `.tunnel/watch-tunnel.log`; คำสั่ง `chatgpt-local down` จะหยุด watchdog ก่อนเสมอ จึงไม่มีการเปิด tunnel กลับหลังจากผู้ใช้สั่งปิดเอง.
+
 ดำเนินการต่อเมื่อ tunnel status แสดงว่า:
 
 ```text

@@ -59,9 +59,10 @@ $runtimeKey = $env:CONTROL_PLANE_API_KEY
 
 try {
     if ([string]::IsNullOrWhiteSpace($runtimeKey)) {
-        $cipherText = Get-Content -LiteralPath $keyPath -Raw
-        $secureKey = ConvertTo-SecureString $cipherText
-        $runtimeKey = [Net.NetworkCredential]::new('', $secureKey).Password
+        $env:MCP_RUNTIME_KEY_PATH = $keyPath
+        $decoder = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+        if ([string]::IsNullOrWhiteSpace($decoder)) { $decoder = 'powershell.exe' }
+        $runtimeKey = (& $decoder -NoLogo -NoProfile -NonInteractive -Command '$cipherText = Get-Content -LiteralPath $env:MCP_RUNTIME_KEY_PATH -Raw; $secureKey = ConvertTo-SecureString $cipherText; [Net.NetworkCredential]::new('''' , $secureKey).Password').Trim()
     }
 
     if ([string]::IsNullOrWhiteSpace($runtimeKey) -or -not $runtimeKey.StartsWith('sk-')) {
@@ -92,6 +93,8 @@ try {
 }
 finally {
     Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:MCP_RUNTIME_KEY_PATH -ErrorAction SilentlyContinue
+    $decoder = $null
     $runtimeKey = $null
     if ($null -ne $secureKey) {
         $secureKey.Dispose()

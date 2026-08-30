@@ -1,6 +1,9 @@
 ﻿#!/usr/bin/env bash
 set -euo pipefail
 
+no_watchdog=false
+if [[ "${1:-}" == "--no-watchdog" ]]; then no_watchdog=true; fi
+
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 platform="$(uname -s)"
 case "$(uname -m)" in
@@ -64,4 +67,14 @@ CONTROL_PLANE_API_KEY="${runtime_key}" "${client_path}" runtimes connect \
 
 "${project_root}/scripts/status-tunnel.sh"
 
+watchdog_pid_file="${project_root}/.tunnel/watch-tunnel.pid"
+if [[ "${no_watchdog}" != true && "${MCP_TUNNEL_WATCHDOG:-}" != "1" && -x "${project_root}/scripts/watch-tunnel.sh" ]]; then
+  existing_pid="$(cat "${watchdog_pid_file}" 2>/dev/null || true)"
+  if [[ ! "${existing_pid}" =~ ^[0-9]+$ ]] || ! kill -0 "${existing_pid}" 2>/dev/null; then
+    mkdir -p "${project_root}/.tunnel"
+    nohup "${project_root}/scripts/watch-tunnel.sh" >/dev/null 2>&1 &
+    printf '%s' "$!" >"${watchdog_pid_file}"
+    echo "Tunnel watchdog started (PID $!)"
+  fi
+fi
 

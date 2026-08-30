@@ -5,9 +5,18 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $clientPath = Join-Path $projectRoot 'tools\tunnel-client-v0.0.13\tunnel-client.exe'
+$watchdogPidPath = Join-Path $projectRoot '.tunnel\watch-tunnel.pid'
 
 if (-not (Test-Path -LiteralPath $clientPath)) {
     throw "Tunnel client not found: $clientPath"
+}
+
+if (Test-Path -LiteralPath $watchdogPidPath) {
+    try {
+        $watchdogPid = [int](Get-Content -LiteralPath $watchdogPidPath -Raw)
+        if (Get-Process -Id $watchdogPid -ErrorAction SilentlyContinue) { Stop-Process -Id $watchdogPid -Force }
+    } catch { }
+    Remove-Item -LiteralPath $watchdogPidPath -Force -ErrorAction SilentlyContinue
 }
 
 # Record the MCP child (node dist/index.js) this daemon is currently running

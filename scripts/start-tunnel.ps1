@@ -1,5 +1,7 @@
 ﻿[CmdletBinding()]
-param()
+param(
+    [switch]$NoWatchdog
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -13,6 +15,8 @@ $policy = if ([string]::IsNullOrWhiteSpace($env:MCP_POLICY)) { 'admin' } else { 
 $approvalMode = if ([string]::IsNullOrWhiteSpace($env:MCP_APPROVAL_MODE)) { 'mrtr' } else { $env:MCP_APPROVAL_MODE }
 $supervisorTimeout = if ([string]::IsNullOrWhiteSpace($env:MCP_SUPERVISOR_TIMEOUT_MS)) { '120000' } else { $env:MCP_SUPERVISOR_TIMEOUT_MS }
 $supervisorPath = (Join-Path $projectRoot 'dist\supervisor.js').Replace('\', '/')
+$watchdogScript = Join-Path $PSScriptRoot 'watch-tunnel.ps1'
+$watchdogPidPath = Join-Path $projectRoot '.tunnel\watch-tunnel.pid'
 $workspaceArg = $workspaceRoot.Replace('\', '/')
 $openArg = if ($accessMode -eq 'workspace') { '' } else { ' --dangerously-open-machine' }
 $mcpCommand = "node $supervisorPath --supervisor-timeout $supervisorTimeout --root `"$workspaceArg`" --policy $policy --approval-mode $approvalMode$openArg"
@@ -30,9 +34,13 @@ $runtimeKey = $env:CONTROL_PLANE_API_KEY
 
 try {
     if ([string]::IsNullOrWhiteSpace($runtimeKey)) {
-        $cipherText = Get-Content -LiteralPath $keyPath -Raw
-        $secureKey = ConvertTo-SecureString $cipherText
-        $runtimeKey = [Net.NetworkCredential]::new('', $secureKey).Password
+        # Windows PowerShell can fail to autoload Microsoft.PowerShell.Security
+        # from a background -File process. Decode in a clean -Command process;
+        # only the key path crosses that process boundary and its output stays in memory.
+        $env:MCP_RUNTIME_KEY_PATH = $keyPath
+        $decoder = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+        if ([string]::IsNullOrWhiteSpace($decoder)) { $decoder = 'powershell.exe' }
+        $runtimeKey = (& $decoder -NoLogo -NoProfile -NonInteractive -Command '$cipherText = Get-Content -LiteralPath $env:MCP_RUNTIME_KEY_PATH -Raw; $secureKey = ConvertTo-SecureString $cipherText; [Net.NetworkCredential]::new('''' , $secureKey).Password').Trim()
     }
 
     if ([string]::IsNullOrWhiteSpace($runtimeKey) -or -not $runtimeKey.StartsWith('sk-')) {
@@ -56,9 +64,24 @@ try {
     }
 
     & (Join-Path $PSScriptRoot 'status-tunnel.ps1')
+
+    if (-not $NoWatchdog -and $env:MCP_TUNNEL_WATCHDOG -ne '1' -and (Test-Path -LiteralPath $watchdogScript)) {
+        $existingPid = $null
+        if (Test-Path -LiteralPath $watchdogPidPath) {
+            try { $existingPid = [int](Get-Content -LiteralPath $watchdogPidPath -Raw) } catch { $existingPid = $null }
+        }
+        if (-not $existingPid -or -not (Get-Process -Id $existingPid -ErrorAction SilentlyContinue)) {
+            $watchdogArgs = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $watchdogScript)
+            $watchdog = Start-Process powershell.exe -ArgumentList $watchdogArgs -WindowStyle Hidden -PassThru
+            Set-Content -LiteralPath $watchdogPidPath -Value $watchdog.Id -Encoding ASCII
+            Write-Host "Tunnel watchdog started (PID $($watchdog.Id))"
+        }
+    }
 }
 finally {
     Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:MCP_RUNTIME_KEY_PATH -ErrorAction SilentlyContinue
+    $decoder = $null
     $runtimeKey = $null
     if ($null -ne $secureKey) {
         $secureKey.Dispose()

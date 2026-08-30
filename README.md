@@ -98,6 +98,8 @@ The underlying `scripts/` commands remain available for debugging, but normal op
 
 The tunnel-facing stdio entry point is `dist/supervisor.js`. It runs `dist/index.js` as an isolated MCP worker. If that worker crashes or stops answering past the hard deadline, the supervisor returns a recoverable error, restarts the worker, replays MCP initialization, and keeps the tunnel process alive. `chatgpt-local status` also reports the persisted worker generation and restart count from `.chatgpt-machine/supervisor.json`.
 
+While the tunnel is intentionally active, a small local watchdog also checks the managed runtime every 15 seconds. After two failed status checks it reconnects the tunnel and writes bounded diagnostics to `.tunnel/watch-tunnel.log`. `chatgpt-local down` stops the watchdog first, so an explicit shutdown is never undone by automatic recovery.
+
 Continue only when the tunnel status reports:
 
 ```text
