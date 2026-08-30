@@ -4,6 +4,7 @@ All notable changes to ChatGPT Machine MCP are documented here.
 
 ## Unreleased
 
+- Added a bounded tunnel watchdog for Windows and Bash. While a tunnel is intentionally active, two consecutive unhealthy runtime checks reconnect it; `chatgpt-local down` stops the watchdog first. The real-supervisor smoke test now keeps its state in its own temporary directory.
 - Hardened the supervised stdio runtime with real `closed`/`open`/`half_open` circuit-breaker states, generation-safe recovery timers, and process-tree termination on Windows and POSIX.
 - Persisted the live worker root and circuit diagnostics so `chatgpt-local status` can detect when a changed active workspace requires a runtime restart.
 - Made `machine_status` compact by default; process history, tool surface, dependency versions, and full runtime metadata are opt-in through `include` or `detailed`.

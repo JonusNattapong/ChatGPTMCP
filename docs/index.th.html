@@ -128,6 +128,7 @@ chatgpt-local check       # effective runtime + v2 contract fingerprint
 chatgpt-local config show
 chatgpt-local version</code></pre>
         <p>Runtime config แบบ local อยู่ใน <code>.chatgpt-machine/config.json</code> ซึ่งถูก Git ignore คำสั่ง <code>chatgpt-local use &lt;path&gt;</code> จะ persist active workspace ส่วน status จะแสดง live worker root และบอกชัดเมื่อจำเป็นต้อง restart; contract v2 fingerprint คำนวณจากชื่อ, schema และ annotations ของ public tools ทั้ง 37 ตัว เพื่อให้ตรวจจับ MCP-surface drift ก่อน deploy ได้</p>
+        <p>ขณะ tunnel ที่ผู้ใช้เริ่มไว้ยังทำงาน <code>watch-tunnel.ps1</code> หรือ <code>watch-tunnel.sh</code> จะตรวจ managed runtime ทุก 15 วินาที หาก unhealthy ติดต่อกัน 2 รอบจะ reconnect tunnel และเก็บ diagnostics แบบจำกัดขนาดที่ <code>.tunnel/watch-tunnel.log</code>; <code>chatgpt-local down</code> จะหยุด watchdog ก่อนเสมอ จึงไม่ย้อนการปิดที่ผู้ใช้สั่งเอง.</p>
         <p>Scripts ระดับล่างยังใช้สำหรับ debugging ได้ (<code>.ps1</code> บน Windows, <code>.sh</code> บน macOS/Ubuntu/WSL):</p>
         <pre><code>.\scripts\start-tunnel.ps1     # หรือ ./scripts/start-tunnel.sh
 .\scripts\status-tunnel.ps1    # หรือ ./scripts/status-tunnel.sh

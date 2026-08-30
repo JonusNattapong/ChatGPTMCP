@@ -15,6 +15,8 @@ ChatGPT Machine MCP is an administrative bridge for a trusted local machine. It 
 
 The tunnel-facing stdio entry point is `dist/supervisor.js`. Tool execution occurs in a child MCP worker. If a request exceeds its hard deadline or the worker exits, the supervisor terminates/restarts that worker and replays MCP initialization. This reduces the blast radius of a hung tool but does not make unrestricted tool execution safe for untrusted callers.
 
+While an operator has started a tunnel, the local watchdog may reconnect an unhealthy managed runtime after two failed checks. It does not start a tunnel after sign-in or reboot, and `chatgpt-local down` stops the watchdog before stopping the runtime. Treat `down` as the explicit way to end both remote access and automatic recovery.
+
 ## Operational guidance
 
 Keep runtime keys under `.tunnel/` and local configuration/state under `.chatgpt-machine/`; both are ignored by Git. Run the tunnel only under the user account whose machine authority you intend to expose. Stop the tunnel when remote machine access is not required.

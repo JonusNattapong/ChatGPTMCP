@@ -127,6 +127,7 @@ chatgpt-local check       # effective runtime + v2 contract fingerprint
 chatgpt-local config show
 chatgpt-local version</code></pre>
         <p>Local runtime settings live in Git-ignored <code>.chatgpt-machine/config.json</code>. <code>chatgpt-local use &lt;path&gt;</code> persists the active workspace; status reports the live worker root and explicitly marks when a restart is required. The v2 contract fingerprint is derived from the 37 public tool names, schemas, and annotations, making MCP-surface drift visible during deployment checks.</p>
+        <p>While a tunnel has been intentionally started, <code>watch-tunnel.ps1</code> or <code>watch-tunnel.sh</code> checks its managed runtime every 15 seconds. Two consecutive unhealthy checks reconnect the tunnel; diagnostics stay bounded in <code>.tunnel/watch-tunnel.log</code>. <code>chatgpt-local down</code> stops that watchdog first, so it never reverses an explicit shutdown.</p>
         <p>Underlying scripts remain available for debugging (<code>.ps1</code> on Windows, <code>.sh</code> on macOS/Ubuntu/WSL):</p>
         <pre><code>.\scripts\start-tunnel.ps1     # or ./scripts/start-tunnel.sh
 .\scripts\status-tunnel.ps1    # or ./scripts/status-tunnel.sh
