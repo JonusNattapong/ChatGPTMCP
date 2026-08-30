@@ -30,7 +30,6 @@ $runtimeKey = $env:CONTROL_PLANE_API_KEY
 
 try {
     if ([string]::IsNullOrWhiteSpace($runtimeKey)) {
-        Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
         $cipherText = Get-Content -LiteralPath $keyPath -Raw
         $secureKey = ConvertTo-SecureString $cipherText
         $runtimeKey = [Net.NetworkCredential]::new('', $secureKey).Password
