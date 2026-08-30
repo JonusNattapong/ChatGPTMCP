@@ -256,7 +256,7 @@ test('the tool registry validates arguments and reports its own surface', async 
   await withRoot('machine-mcp-registry-', async (root) => {
     const specs = createToolSpecs({ root, unrestricted: false, maxTimeoutMs: 60_000 });
     const byName = new Map(specs.map((spec) => [spec.name, spec]));
-    assert.equal(specs.length, 35);
+    assert.equal(specs.length, 37);
 
     await assert.rejects(
       byName.get('read_file')!.handler({}),
@@ -267,11 +267,15 @@ test('the tool registry validates arguments and reports its own surface', async 
       (error: unknown) => toolError(error).code === 'INVALID_ARGUMENT',
     );
 
-    const status = await byName.get('machine_status')!.handler({}) as {
+    const compact = await byName.get('machine_status')!.handler({}) as Record<string, unknown>;
+    assert.equal('tools' in compact, false);
+    assert.equal('available' in compact, false);
+
+    const status = await byName.get('machine_status')!.handler({ detailed: true }) as {
       tools: string[];
       available: { searchEngine: string };
     };
-    // The reported surface is derived from the registry, so it cannot drift.
+    // The expanded surface is derived from the registry, so it cannot drift.
     assert.deepEqual(status.tools, specs.map((spec) => spec.name));
     assert.ok(['ripgrep', 'builtin'].includes(status.available.searchEngine));
   });

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export type AccessMode = 'unrestricted' | 'restricted';
@@ -67,4 +67,24 @@ export function configEnvironment(config: LocalConfig): Record<string, string> {
     MCP_ACCESS_MODE: config.accessMode,
     MCP_SUPERVISOR_TIMEOUT_MS: String(config.supervisorTimeoutMs),
   };
+}
+
+export function setWorkspaceRoot(root: string, newWorkspace: string): LocalConfig {
+  if (!newWorkspace || typeof newWorkspace !== 'string') {
+    throw new Error('Workspace path must be a non-empty string.');
+  }
+  const resolved = path.resolve(newWorkspace);
+  if (!existsSync(resolved)) {
+    throw new Error(`Workspace path does not exist: ${resolved}`);
+  }
+  const stat = statSync(resolved);
+  if (!stat.isDirectory()) {
+    throw new Error(`Workspace path is not a directory: ${resolved}`);
+  }
+  const current = loadLocalConfig(root);
+  const updated: LocalConfig = { ...current, workspaceRoot: resolved };
+  const p = localConfigPath(root);
+  mkdirSync(path.dirname(p), { recursive: true });
+  writeFileSync(p, JSON.stringify(updated, null, 2) + '\n', 'utf8');
+  return updated;
 }

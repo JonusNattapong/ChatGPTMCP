@@ -1,36 +1,42 @@
 {
-    "name": "chatgpt-machine-mcp",
-    "version": "1.0.0",
-    "description": "Local MCP bridge that lets trusted ChatGPT clients operate a machine through explicit MCP tools",
-    "type": "module",
-    "main": "dist/index.js",
-    "bin": {
-        "chatgpt-local": "./dist/cli.js",
-        "chatgpt-machine-mcp": "./dist/supervisor.js"
-    },
-    "files": [
-        "dist",
-        "README.md"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "start": "node dist/index.js",
-        "test": "npm run build && node --test dist/*.test.js",
-        "prepare": "npm run build"
-    },
-    "engines": {
-        "node": ">=20"
-    },
-    "license": "MIT",
-    "dependencies": {
-        "@modelcontextprotocol/core": "^2.0.0",
-        "@modelcontextprotocol/node": "^2.0.0",
-        "@modelcontextprotocol/server": "^2.0.0",
-        "@opentelemetry/api": "^1.9.1"
-    },
-    "devDependencies": {
-        "@modelcontextprotocol/client": "^2.0.0",
-        "@types/node": "^24.0.0",
-        "typescript": "^5.9.0"
-    }
+  "name": "chatgpt-machine-mcp",
+  "version": "1.0.0",
+  "description": "Local MCP bridge that lets trusted ChatGPT clients operate a machine through explicit MCP tools",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "chatgpt-local": "./dist/cli.js",
+    "chatgpt-machine-mcp": "./dist/supervisor.js"
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "README.md",
+    "README.th.md",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "npm run build && node --test dist/*.test.js",
+    "smoke": "npm run build && node --test dist/mcp-smoke.test.js dist/supervisor.test.js",
+    "verify": "npm test && node dist/index.js --check",
+    "prepare": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/core": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@opentelemetry/api": "^1.9.1"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
 }

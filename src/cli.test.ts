@@ -3,16 +3,32 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { preflight, resolveScript, run, usage } from './cli.js';
+import { normalizeCommand, preflight, resolveScript, run, usage, workspaceNeedsRestart } from './cli.js';
 
 test('usage documents every operator command', () => {
   const text = usage();
   assert.match(text, /Usage:/);
-  for (const command of ['setup', 'up', 'down', 'restart', 'status', 'doctor']) {
+  for (const command of ['setup', 'up', 'down', 'restart', 'status', 'doctor', 'use', 'workspace']) {
     assert.match(text, new RegExp(`chatgpt-local ${command}`));
   }
 });
 
+test('CLI normalizes conventional help and version aliases', () => {
+  assert.equal(normalizeCommand(undefined), 'help');
+  assert.equal(normalizeCommand('--help'), 'help');
+  assert.equal(normalizeCommand('-h'), 'help');
+  assert.equal(normalizeCommand('--version'), 'version');
+  assert.equal(normalizeCommand('-v'), 'version');
+  assert.equal(normalizeCommand('status'), 'status');
+});
+
+test('workspace restart hint distinguishes persisted config from the live runtime root', () => {
+  const configured = path.resolve('C:/workspace/new');
+  assert.equal(workspaceNeedsRestart(configured, undefined), false);
+  assert.equal(workspaceNeedsRestart(configured, { health: 'stopped', workerRoot: 'C:/workspace/old' }), false);
+  assert.equal(workspaceNeedsRestart(configured, { health: 'healthy', workerRoot: configured }), false);
+  assert.equal(workspaceNeedsRestart(configured, { health: 'healthy', workerRoot: 'C:/workspace/old' }), true);
+});
 test('resolveScript selects the platform-native launcher', () => {
   const scriptsDir = path.join('C:', 'repo', 'scripts');
   const win = resolveScript('win32', scriptsDir, 'start-tunnel');

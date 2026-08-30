@@ -1,9 +1,9 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { configEnvironment, defaultLocalConfig, initLocalConfig, loadLocalConfig, localConfigPath } from './config.js';
+import { configEnvironment, defaultLocalConfig, initLocalConfig, loadLocalConfig, localConfigPath, setWorkspaceRoot } from './config.js';
 
 test('local config defaults preserve current operator behavior', () => {
   const root = path.join(tmpdir(), 'project', 'ChatGPTMCP');
@@ -33,4 +33,20 @@ test('local config validates unsafe or malformed values', () => {
     writeFileSync(localConfigPath(root), JSON.stringify({ accessMode: 'root', supervisorTimeoutMs: 1 }));
     assert.throws(() => loadLocalConfig(root), /accessMode|supervisorTimeoutMs/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('setWorkspaceRoot validates directory and updates workspaceRoot', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'machine-config-set-'));
+  const workspace = mkdtempSync(path.join(tmpdir(), 'machine-workspace-target-'));
+  try {
+    initLocalConfig(root);
+    const updated = setWorkspaceRoot(root, workspace);
+    assert.equal(updated.workspaceRoot, path.resolve(workspace));
+    assert.equal(loadLocalConfig(root).workspaceRoot, path.resolve(workspace));
+
+    assert.throws(() => setWorkspaceRoot(root, path.join(tmpdir(), 'non-existent-dir-xyz-84729')), /does not exist/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });

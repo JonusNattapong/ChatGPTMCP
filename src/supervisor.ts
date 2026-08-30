@@ -1,11 +1,32 @@
-﻿#!/usr/bin/env node
-
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+export type SupervisorHealth = 'healthy' | 'degraded' | 'restarting' | 'stopped';
+export type SupervisorCircuit = 'closed' | 'open' | 'half_open';
+
+export function killProcessTree(pid: number | undefined): void {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try {
+      const result = spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      if (result.error) throw result.error;
+      return;
+    } catch {
+      try { process.kill(pid); } catch { /* already gone */ }
+      return;
+    }
+  }
+  try {
+    // supervisor children are spawned detached on POSIX, making their PID the
+    // process-group id. Killing -pid therefore terminates the whole worker tree.
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+  }
+}
 interface JsonRpcMessage {
   jsonrpc?: string;
   id?: string | number | null;
@@ -26,6 +47,10 @@ export interface SupervisorOptions {
   requestTimeoutMs: number;
   restartDelayMs: number;
   stateFile?: string;
+  circuitWindowMs?: number;
+  circuitThreshold?: number;
+  circuitCooldownMs?: number;
+  recoveryStableMs?: number;
   stdio?: {
     input: NodeJS.ReadableStream;
     output: NodeJS.WritableStream;
@@ -36,6 +61,10 @@ export interface SupervisorOptions {
 const REINIT_ID = '__chatgpt_machine_supervisor_reinitialize__';
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const RESTART_DELAY_MS = 250;
+const CIRCUIT_WINDOW_MS = 30_000;
+const CIRCUIT_THRESHOLD = 3;
+const CIRCUIT_COOLDOWN_MS = 30_000;
+const RECOVERY_STABLE_MS = 15_000;
 
 function parseMessage(line: string): JsonRpcMessage | undefined {
   try {
@@ -69,6 +98,12 @@ export class McpSupervisor {
   private childGeneration = 0;
   private stopping = false;
   private restarting = false;
+  private health: SupervisorHealth = 'healthy';
+  private circuit: SupervisorCircuit = 'closed';
+  private circuitRetryAt?: number;
+  private failureTimestamps: number[] = [];
+  private recoveryTimer?: NodeJS.Timeout;
+  private restartTimer?: NodeJS.Timeout;
   private pending = new Map<string | number | null, PendingRequest>();
   private queuedLines: string[] = [];
   private initializeMessage?: JsonRpcMessage;
@@ -97,41 +132,77 @@ export class McpSupervisor {
   stop(): void {
     if (this.stopping) return;
     this.stopping = true;
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    if (this.restartTimer) clearTimeout(this.restartTimer);
     for (const item of this.pending.values()) clearTimeout(item.timer);
     this.pending.clear();
-    this.child?.kill();
-    this.writeState(false);
+    this.health = 'stopped';
+    const pid = this.child?.pid;
+    this.child = undefined;
+    killProcessTree(pid);
+    this.writeState(false, 'stopped');
   }
 
-  private writeState(ready: boolean): void {
+  private workerRoot(): string | undefined {
+    const index = this.options.childArgs.indexOf('--root');
+    const value = index >= 0 ? this.options.childArgs[index + 1] : undefined;
+    return value ? path.resolve(value) : undefined;
+  }
+
+  private writeState(ready: boolean, healthOverride?: SupervisorHealth): void {
     if (!this.options.stateFile) return;
     const destination = this.options.stateFile;
-    const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`;
+    const temporary = `${destination}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     mkdirSync(path.dirname(destination), { recursive: true });
+    const health = healthOverride ?? this.health;
     writeFileSync(temporary, JSON.stringify({
-      version: 1,
+      version: 2,
       supervisorPid: process.pid,
       workerPid: this.child?.pid ?? null,
       workerGeneration: this.childGeneration,
+      workerRoot: this.workerRoot() ?? null,
       ready,
+      health,
+      circuit: this.circuit,
+      circuitRetryAt: this.circuitRetryAt ? new Date(this.circuitRetryAt).toISOString() : null,
       restarts: this.restarts,
       lastRestartReason: this.lastRestartReason ?? null,
       startedAt: this.startedAt,
       updatedAt: new Date().toISOString(),
     }, null, 2) + '\n', 'utf8');
-    renameSync(temporary, destination);
+    try {
+      renameSync(temporary, destination);
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform === 'win32' && (code === 'EPERM' || code === 'EEXIST')) {
+        // Windows can transiently reject replacing an existing state file. The
+        // temp file is unique, so a bounded remove+rename fallback is safe here.
+        rmSync(destination, { force: true });
+        renameSync(temporary, destination);
+      } else {
+        rmSync(temporary, { force: true });
+        throw error;
+      }
+    }
   }
 
   private spawnChild(): void {
-    if (this.stopping) return;
+    if (this.stopping || this.circuit === 'open') return;
     const generation = ++this.childGeneration;
     const child = spawn(process.execPath, [this.options.childEntry, ...this.options.childArgs], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...process.env, MCP_SUPERVISED: '1', MCP_WORKER_GENERATION: String(generation) },
+      detached: process.platform !== 'win32',
+      env: {
+        ...process.env,
+        MCP_SUPERVISED: '1',
+        MCP_WORKER_GENERATION: String(generation),
+        ...(this.options.stateFile ? { MCP_SUPERVISOR_STATE_FILE: this.options.stateFile } : {}),
+      },
     });
     this.child = child;
-    this.writeState(!this.reinitializing && generation === 1);
+    const isFirstReady = !this.reinitializing && generation === 1;
+    this.writeState(isFirstReady, isFirstReady ? 'healthy' : this.health);
     this.error.write(`[chatgpt-machine-supervisor] worker started generation=${generation} pid=${child.pid ?? 'unknown'}\n`);
 
     const stdoutLines = createInterface({ input: child.stdout, crlfDelay: Infinity });
@@ -160,6 +231,18 @@ export class McpSupervisor {
     if (message.method === 'initialize' && message.id !== undefined) this.initializeMessage = message;
     if (message.method === 'notifications/initialized') this.initializedNotification = message;
 
+    if (this.circuit === 'open') {
+      if (message.id !== undefined && message.method) {
+        this.output.write(responseFor(message.id, 'MCP worker circuit is open after repeated failures.', {
+          reason: 'circuit_open',
+          health: this.health,
+          retryAfterMs: Math.max(0, (this.circuitRetryAt ?? Date.now()) - Date.now()),
+          recoverable: true,
+        }));
+      }
+      return;
+    }
+
     if (this.reinitializing || !this.child || this.child.killed) {
       this.queuedLines.push(line);
       return;
@@ -180,6 +263,39 @@ export class McpSupervisor {
     this.child.stdin.write(line + '\n');
   }
 
+  private markWorkerReady(generation: number): void {
+    this.reinitializing = false;
+    const probing = this.circuit === 'half_open';
+    this.health = probing ? 'degraded' : 'healthy';
+    this.writeState(true, this.health);
+
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    const stableMs = this.options.recoveryStableMs ?? RECOVERY_STABLE_MS;
+    this.recoveryTimer = setTimeout(() => {
+      if (
+        this.stopping ||
+        this.restarting ||
+        this.reinitializing ||
+        generation !== this.childGeneration ||
+        !this.child ||
+        this.child.killed
+      ) return;
+      this.failureTimestamps = [];
+      this.circuit = 'closed';
+      this.circuitRetryAt = undefined;
+      this.health = 'healthy';
+      this.writeState(true, 'healthy');
+      this.error.write(`[chatgpt-machine-supervisor] worker stable generation=${generation}; circuit=closed\n`);
+    }, stableMs).unref();
+
+    const queued = this.queuedLines.splice(0);
+    for (const queuedLine of queued) {
+      const queuedMessage = parseMessage(queuedLine);
+      if (queuedMessage) this.forwardToChild(queuedLine, queuedMessage);
+    }
+    this.error.write(`[chatgpt-machine-supervisor] worker ready generation=${generation} (health=${this.health}, circuit=${this.circuit})\n`);
+  }
+
   private onChildLine(line: string, generation: number): void {
     if (generation !== this.childGeneration) return;
     const message = parseMessage(line);
@@ -196,14 +312,7 @@ export class McpSupervisor {
       if (this.initializedNotification && this.child && !this.child.killed) {
         this.child.stdin.write(JSON.stringify(this.initializedNotification) + '\n');
       }
-      this.reinitializing = false;
-      this.writeState(true);
-      const queued = this.queuedLines.splice(0);
-      for (const queuedLine of queued) {
-        const queuedMessage = parseMessage(queuedLine);
-        if (queuedMessage) this.forwardToChild(queuedLine, queuedMessage);
-      }
-      this.error.write(`[chatgpt-machine-supervisor] worker ready generation=${generation}\n`);
+      this.markWorkerReady(generation);
       return;
     }
 
@@ -235,27 +344,81 @@ export class McpSupervisor {
     this.restartWorker(reason);
   }
 
-  private restartWorker(reason: string): void {
-    if (this.stopping || this.restarting) return;
-    this.restarting = true;
-    this.reinitializing = Boolean(this.initializeMessage);
-    this.restarts++;
-    this.lastRestartReason = reason;
-    this.writeState(false);
-    this.error.write(`[chatgpt-machine-supervisor] restarting worker: ${reason}\n`);
+  private rejectPending(reason: 'worker_restarted' | 'circuit_open', message: string): void {
     for (const [id, item] of this.pending) {
       clearTimeout(item.timer);
-      this.output.write(responseFor(id, 'MCP worker restarted before the request completed.', {
-        reason: 'worker_restarted',
+      this.output.write(responseFor(id, message, {
+        reason,
         workerGeneration: this.childGeneration,
+        health: this.health,
         recoverable: true,
       }));
     }
     this.pending.clear();
-    const current = this.child;
+  }
+
+  private killCurrentWorker(): void {
+    const pid = this.child?.pid;
     this.child = undefined;
-    current?.kill();
-    setTimeout(() => {
+    killProcessTree(pid);
+  }
+
+  private openCircuit(reason: string): void {
+    const cooldownMs = this.options.circuitCooldownMs ?? CIRCUIT_COOLDOWN_MS;
+    this.circuit = 'open';
+    this.health = 'degraded';
+    this.circuitRetryAt = Date.now() + cooldownMs;
+    this.killCurrentWorker();
+    this.rejectPending('circuit_open', 'MCP worker circuit opened after repeated failures.');
+    this.writeState(false, 'degraded');
+    this.error.write(`[chatgpt-machine-supervisor] circuit opened cooldown=${cooldownMs}ms: ${reason}\n`);
+
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = undefined;
+      if (this.stopping) return;
+      this.circuit = 'half_open';
+      this.circuitRetryAt = undefined;
+      this.health = 'restarting';
+      this.restarting = false;
+      this.reinitializing = Boolean(this.initializeMessage);
+      this.writeState(false, 'restarting');
+      this.error.write('[chatgpt-machine-supervisor] circuit half-open probe starting\n');
+      this.spawnChild();
+    }, cooldownMs).unref();
+  }
+
+  private restartWorker(reason: string): void {
+    if (this.stopping || this.restarting || this.circuit === 'open') return;
+    if (this.recoveryTimer) {
+      clearTimeout(this.recoveryTimer);
+      this.recoveryTimer = undefined;
+    }
+    this.restarting = true;
+    this.reinitializing = Boolean(this.initializeMessage);
+    this.restarts++;
+    this.lastRestartReason = reason;
+
+    const now = Date.now();
+    const windowMs = this.options.circuitWindowMs ?? CIRCUIT_WINDOW_MS;
+    const threshold = this.options.circuitThreshold ?? CIRCUIT_THRESHOLD;
+    this.failureTimestamps = this.failureTimestamps.filter((t) => now - t < windowMs);
+    this.failureTimestamps.push(now);
+
+    if (this.circuit === 'half_open' || this.failureTimestamps.length >= threshold) {
+      this.openCircuit(reason);
+      return;
+    }
+
+    this.health = 'restarting';
+    this.rejectPending('worker_restarted', 'MCP worker restarted before the request completed.');
+    this.killCurrentWorker();
+    this.writeState(false, 'restarting');
+    this.error.write(`[chatgpt-machine-supervisor] restarting worker delay=${this.options.restartDelayMs}ms: ${reason}\n`);
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = undefined;
+      if (this.stopping) return;
       this.restarting = false;
       this.spawnChild();
     }, this.options.restartDelayMs).unref();

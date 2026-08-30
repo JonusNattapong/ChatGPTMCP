@@ -1,19 +1,25 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { configEnvironment, initLocalConfig, loadLocalConfig, localConfigPath, type LocalConfig } from './config.js';
+import { configEnvironment, initLocalConfig, loadLocalConfig, localConfigPath, setWorkspaceRoot, type LocalConfig } from './config.js';
 import { APP_VERSION } from './version.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
 const scriptsDir = path.join(projectRoot, 'scripts');
 
-type Command = 'setup' | 'up' | 'down' | 'restart' | 'status' | 'doctor' | 'check' | 'config' | 'version' | 'help';
+type Command = 'setup' | 'up' | 'down' | 'restart' | 'status' | 'use' | 'workspace' | 'doctor' | 'check' | 'config' | 'version' | 'help';
+
+export function normalizeCommand(value: string | undefined): string {
+  if (value === undefined || value === '--help' || value === '-h') return 'help';
+  if (value === '--version' || value === '-v') return 'version';
+  return value;
+}
 
 export function usage(): string {
-  return `chatgpt-local ${APP_VERSION}\n\nUsage:\n  chatgpt-local setup\n  chatgpt-local up\n  chatgpt-local down\n  chatgpt-local restart\n  chatgpt-local status\n  chatgpt-local doctor\n  chatgpt-local check\n  chatgpt-local config [show|init|reset]\n  chatgpt-local version\n\n`;
+  return `chatgpt-local ${APP_VERSION}\n\nUsage:\n  chatgpt-local setup\n  chatgpt-local up\n  chatgpt-local down\n  chatgpt-local restart\n  chatgpt-local status\n  chatgpt-local use <path>\n  chatgpt-local workspace [path]\n  chatgpt-local doctor\n  chatgpt-local check\n  chatgpt-local config [show|init|reset]\n  chatgpt-local version\n\n`;
 }
 
 export function run(program: string, args: string[], cwd = projectRoot, env?: NodeJS.ProcessEnv): Promise<void> {
@@ -94,23 +100,54 @@ function showConfig(): void {
   process.stdout.write(JSON.stringify({ file: localConfigPath(projectRoot), ...config }, null, 2) + '\n');
 }
 
-function showSupervisorState(): void {
+interface SupervisorState {
+  ready?: boolean;
+  health?: string;
+  circuit?: string;
+  workerGeneration?: number;
+  workerPid?: number | null;
+  workerRoot?: string | null;
+  restarts?: number;
+  lastRestartReason?: string | null;
+}
+
+function readSupervisorState(): SupervisorState | undefined {
   const file = path.join(projectRoot, '.chatgpt-machine', 'supervisor.json');
-  if (!existsSync(file)) {
-    process.stdout.write('supervisor: no local state\n');
-    return;
-  }
+  if (!existsSync(file)) return undefined;
   try {
-    const state = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-    process.stdout.write(`supervisor: ${state.ready === true ? 'ready' : 'not-ready'} generation=${state.workerGeneration ?? '?'} restarts=${state.restarts ?? '?'} worker_pid=${state.workerPid ?? '?'}\n`);
-    if (state.lastRestartReason) process.stdout.write(`last_restart: ${String(state.lastRestartReason)}\n`);
-  } catch (error) {
-    process.stdout.write(`supervisor: state unreadable (${error instanceof Error ? error.message : String(error)})\n`);
+    return JSON.parse(readFileSync(file, 'utf8')) as SupervisorState;
+  } catch {
+    return undefined;
   }
 }
 
+export function workspaceNeedsRestart(configuredRoot: string, state: SupervisorState | undefined): boolean {
+  if (!state?.workerRoot || state.health === 'stopped') return false;
+  return path.resolve(state.workerRoot) !== path.resolve(configuredRoot);
+}
+
+function showWorkspaceRuntimeHint(config: LocalConfig, state = readSupervisorState()): void {
+  if (!state?.workerRoot) return;
+  process.stdout.write(`runtime_workspace: ${state.workerRoot}\n`);
+  if (workspaceNeedsRestart(config.workspaceRoot, state)) {
+    process.stdout.write('restart_required: true (run `chatgpt-local restart`)\n');
+  }
+}
+
+function showSupervisorState(config: LocalConfig): void {
+  const state = readSupervisorState();
+  if (!state) {
+    process.stdout.write('supervisor: no local state\n');
+    return;
+  }
+  const health = typeof state.health === 'string' ? state.health : (state.ready === true ? 'healthy' : 'not-ready');
+  process.stdout.write(`supervisor: ${health} (ready=${state.ready === true}) circuit=${state.circuit ?? 'unknown'} generation=${state.workerGeneration ?? '?'} restarts=${state.restarts ?? '?'} worker_pid=${state.workerPid ?? '?'}\n`);
+  showWorkspaceRuntimeHint(config, state);
+  if (state.lastRestartReason) process.stdout.write(`last_restart: ${String(state.lastRestartReason)}\n`);
+}
+
 async function main(): Promise<void> {
-  const command = (process.argv[2] ?? 'help') as Command;
+  const command = normalizeCommand(process.argv[2]) as Command;
   switch (command) {
     case 'setup':
       await setup();
@@ -126,10 +163,27 @@ async function main(): Promise<void> {
       await runNpm(['run', 'build']);
       await runScript('refresh-tunnel');
       break;
-    case 'status':
+    case 'status': {
+      const config = loadLocalConfig(projectRoot);
+      process.stdout.write(`workspace: ${config.workspaceRoot}\n`);
       await runScript('status-tunnel');
-      showSupervisorState();
+      showSupervisorState(config);
       break;
+    }
+    case 'use':
+    case 'workspace': {
+      const target = process.argv[3];
+      if (!target) {
+        const config = loadLocalConfig(projectRoot);
+        process.stdout.write(`workspace: ${config.workspaceRoot}\n`);
+        showWorkspaceRuntimeHint(config);
+      } else {
+        const updated = setWorkspaceRoot(projectRoot, target);
+        process.stdout.write(`Active workspace set to: ${updated.workspaceRoot}\n`);
+        showWorkspaceRuntimeHint(updated);
+      }
+      break;
+    }
     case 'doctor': {
       await runNpm(['run', 'build']);
       const config = loadLocalConfig(projectRoot);

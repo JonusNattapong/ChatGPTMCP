@@ -6,7 +6,7 @@ Repository instructions for coding agents working in `ChatGPTMCP`.
 
 `chatgpt-machine-mcp` is a small local MCP server that intentionally exposes high-authority machine operations.
 
-Keep the implementation narrow. The public contract is thirty-five tools:
+Keep the implementation narrow. The public contract is thirty-seven tools:
 
 1. `machine_status`
 2. `read_file`
@@ -43,6 +43,8 @@ Keep the implementation narrow. The public contract is thirty-five tools:
 33. `audit_recent`
 34. `audit_search`
 35. `apply_patch`
+36. `verify_changes`
+37. `git_commit_verified`
 
 Do not introduce orchestration, planning, memory, agent delegation, or a generic task framework into this repository unless a concrete requirement demands it. This project is infrastructure plumbing, not an agent harness.
 
@@ -50,14 +52,16 @@ Do not introduce orchestration, planning, memory, agent delegation, or a generic
 
 Treat these files as authoritative, in this order:
 
-1. `src/tools.ts` â€” the tool registry: schema, description, argument validation, and handler for every tool.
-2. `src/index.ts` â€” CLI, transports, HTTP authentication, and the shared result envelope.
-3. `src/errors.ts` â€” `ToolError` and the stable `error.code` vocabulary.
-4. `src/file-tools.ts` â€” bounded file operations, directory walk, and structured code search.
-5. `src/shell-tools.ts` â€” path policy, shell execution, patch semantics.
-6. `scripts/*.ps1` and `scripts/*.sh` â€” local Secure MCP Tunnel lifecycle on Windows, macOS, Ubuntu, and WSL.
-7. tests â€” executable contract.
-8. `README.md` and `docs/*.svg` â€” human-facing description of the above.
+1. `src/tools.ts` — the 37-tool registry: schema, description, argument validation, and handler for every tool.
+2. `src/contract.ts` — the versioned public tool contract and deterministic contract fingerprint.
+3. `src/supervisor.ts` — the tunnel-facing stdio worker boundary, hard deadline, restart/reinitialize logic, and supervisor state.
+4. `src/index.ts` — MCP worker, transports, HTTP authentication/readiness, policy gates, and the shared result envelope.
+5. `src/config.ts` and `src/cli.ts` — local operator configuration and `chatgpt-local` lifecycle/diagnostics.
+6. `src/errors.ts` — `ToolError` and the stable `error.code` vocabulary.
+7. `src/file-tools.ts`, `src/shell-tools.ts`, `src/process-tools.ts`, `src/git-tools.ts`, `src/system-tools.ts`, and `src/verification.ts` — host operations and verified execution behind the registry and policy boundary.
+8. `scripts/*.ps1` and `scripts/*.sh` — local Secure MCP Tunnel lifecycle and installer helpers on Windows, macOS, Ubuntu, and WSL.
+9. tests — executable contract and recovery/portability gates.
+10. `README.md`, `README.th.md`, `docs/*.html`, and `docs/*.svg` — human-facing description of the above.
 
 Tool definitions and handlers must stay together in `src/tools.ts`. `machine_status` derives its tool list from that registry; do not reintroduce a hand-maintained copy.
 

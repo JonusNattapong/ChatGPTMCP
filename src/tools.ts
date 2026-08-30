@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -41,6 +42,7 @@ import {
   gitStatus,
 } from './git-tools.js';
 import { diskInfo, environmentInfo, listPorts, listProcesses, networkInfo, systemInfo } from './system-tools.js';
+import { gitCommitVerified, verifyChanges, type VerificationProfile } from './verification.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -140,6 +142,14 @@ function optionalShell(args: Record<string, unknown>): ShellKind {
   return value as ShellKind;
 }
 
+function optionalVerificationProfile(args: Record<string, unknown>): VerificationProfile | undefined {
+  const value = args.profile;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !['fast', 'normal', 'strict'].includes(value)) {
+    throw new ToolError('INVALID_ARGUMENT', '"profile" must be one of: fast, normal, strict.');
+  }
+  return value as VerificationProfile;
+}
 /**
  * External-tool probes are cached for the process lifetime: machine_status is
  * called often, and a missing binary does not appear mid-session.
@@ -175,10 +185,87 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
   const specs: ToolSpec[] = [
     {
       name: 'machine_status',
-      description: 'Report the access mode, workspace root, platform, available external tools (git, ripgrep, shells), and the background processes this session manages. Call this first when unsure what the bridge can do.',
-      inputSchema: { type: 'object', properties: { include: { type: 'array', items: { type: 'string', enum: ['git', 'project'] }, description: 'Optional bootstrap sections.' } } },
+      description: 'Return a compact machine/runtime health summary. Request optional sections or detailed=true only when deeper diagnostics are needed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          include: { type: 'array', items: { type: 'string', enum: ['git', 'project', 'processes', 'tools'] }, description: 'Optional expanded sections.' },
+          detailed: { type: 'boolean', description: 'Include service, platform, dependency, governance, process-history, and tool-surface details.' },
+        },
+      },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       handler: async (args) => {
+        const include = optionalStringArray(args, 'include') ?? [];
+        const detailed = optionalBoolean(args, 'detailed') === true;
+        const supervisorFile = process.env.MCP_SUPERVISOR_STATE_FILE ?? path.join(context.root, '.chatgpt-machine', 'supervisor.json');
+        let supervisorState: {
+          health?: string;
+          circuit?: string;
+          circuitRetryAt?: string | null;
+          lastRestartReason?: string | null;
+          restarts?: number;
+          workerRoot?: string | null;
+        } | undefined;
+        try {
+          if (existsSync(supervisorFile)) supervisorState = JSON.parse(readFileSync(supervisorFile, 'utf8')) as typeof supervisorState;
+        } catch { /* ignore unreadable state */ }
+
+        let configuredWorkspace: string | undefined;
+        try {
+          const configFile = path.join(path.dirname(supervisorFile), 'config.json');
+          if (existsSync(configFile)) {
+            const config = JSON.parse(readFileSync(configFile, 'utf8')) as { workspaceRoot?: unknown };
+            if (typeof config.workspaceRoot === 'string') configuredWorkspace = path.resolve(config.workspaceRoot);
+          }
+        } catch { /* ignore unreadable config */ }
+
+        const allProcesses = await listManagedProcesses(access);
+        const runningProcesses = allProcesses.filter((entry) => entry.running);
+        let statusDetail: Awaited<ReturnType<typeof gitStatus>> | undefined;
+        try { statusDetail = await gitStatus(access); } catch { /* workspace may not be a git repo */ }
+        const gitLabel = statusDetail ? (statusDetail.clean ? 'clean' : `${statusDetail.files.length} changes (${statusDetail.branch})`) : 'non-git';
+        const health = supervisorState?.health ?? (process.env.MCP_SUPERVISED === '1' ? 'healthy' : 'unsupervised');
+        const restartRequired = Boolean(
+          supervisorState &&
+          supervisorState.health !== 'stopped' &&
+          configuredWorkspace &&
+          path.resolve(context.root) !== configuredWorkspace,
+        );
+
+        const project = (detailed || include.includes('project')) ? await readFile(path.join(context.root, 'package.json'), 'utf8').then((text) => {
+          const pkg = JSON.parse(text) as { name?: string; scripts?: Record<string, string> };
+          return { name: pkg.name, scripts: Object.fromEntries(Object.entries(pkg.scripts ?? {}).filter(([name]) => ['dev', 'test', 'build', 'lint', 'start', 'check', 'typecheck'].includes(name))) };
+        }).catch(() => undefined) : undefined;
+
+        const base = {
+          status: health,
+          workspace: {
+            name: path.basename(context.root),
+            root: context.root,
+            git: gitLabel,
+            ...(restartRequired && configuredWorkspace ? { configuredRoot: configuredWorkspace } : {}),
+          },
+          processes: { running: runningProcesses.length, total: allProcesses.length },
+          diagnostics: {
+            status: health,
+            circuit: supervisorState?.circuit ?? (process.env.MCP_SUPERVISED === '1' ? 'closed' : 'n/a'),
+            circuitRetryAt: supervisorState?.circuitRetryAt ?? null,
+            restarts: supervisorState?.restarts ?? 0,
+            lastRestartReason: supervisorState?.lastRestartReason ?? null,
+            restartRequired,
+          },
+        };
+
+        if (!detailed) {
+          return {
+            ...base,
+            ...(include.includes('processes') ? { managedProcesses: allProcesses } : {}),
+            ...(include.includes('tools') ? { tools: specs.map((spec) => spec.name) } : {}),
+            ...(include.includes('project') ? { project } : {}),
+            ...(include.includes('git') ? { git: statusDetail } : {}),
+          };
+        }
+
         const contract = createContractManifest(specs);
         const [git, ripgrep, bash, powershell] = await Promise.all([
           probeVersion('git', ['--version']),
@@ -186,12 +273,8 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           probeVersion('bash', ['--version']),
           probeVersion(process.platform === 'win32' ? 'powershell.exe' : 'pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']),
         ]);
-        const include = optionalStringArray(args, 'include') ?? [];
-        const project = include.includes('project') ? await readFile(path.join(context.root, 'package.json'), 'utf8').then((text) => {
-          const pkg = JSON.parse(text) as { name?: string; scripts?: Record<string, string> };
-          return { name: pkg.name, scripts: Object.fromEntries(Object.entries(pkg.scripts ?? {}).filter(([name]) => ['dev', 'test', 'build', 'lint', 'start'].includes(name))) };
-        }).catch(() => undefined) : undefined;
         return {
+          ...base,
           service: {
             version: APP_VERSION,
             contractVersion: CONTRACT_VERSION,
@@ -205,22 +288,12 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           pid: process.pid,
           node: process.version,
           maxTimeoutMs: context.maxTimeoutMs,
-          available: {
-            git,
-            ripgrep,
-            bash,
-            powershell,
-            // search_code still works without ripgrep, through a slower built-in scanner.
-            searchEngine: ripgrep ? 'ripgrep' : 'builtin',
-          },
-          governance: {
-            policy: context.policyName ?? 'admin',
-            approvalMode: context.approvalMode ?? 'mrtr',
-            auditFile: audit.filePath,
-          },
-          managedProcesses: await listManagedProcesses(access),
+          available: { git, ripgrep, bash, powershell, searchEngine: ripgrep ? 'ripgrep' : 'builtin' },
+          governance: { policy: context.policyName ?? 'admin', approvalMode: context.approvalMode ?? 'mrtr', auditFile: audit.filePath },
+          managedProcesses: allProcesses,
           tools: specs.map((spec) => spec.name),
           project,
+          git: statusDetail,
         };
       },
     },
@@ -698,6 +771,25 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       },
     },
     {
+      name: 'verify_changes',
+      description: 'Run the detected project verification pipeline with a fast, normal, or strict profile. This executes repository-defined build/test scripts but does not stage or commit files.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Project directory; defaults to the workspace.' },
+          profile: { type: 'string', enum: ['fast', 'normal', 'strict'], description: 'Verification depth; defaults to normal.' },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: 660000, description: 'Timeout per verification command.' },
+        },
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      handler: async (args) => verifyChanges({
+        ...access,
+        path: optionalString(args, 'path'),
+        profile: optionalVerificationProfile(args),
+        timeoutMs: optionalInteger(args, 'timeout_ms') ?? context.maxTimeoutMs,
+      }),
+    },
+    {
       name: 'git_status',
       description: 'Read the current Git branch, upstream tracking state, and working-tree status without running a shell command.',
       inputSchema: {
@@ -802,6 +894,30 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
       handler: async (args) => gitCommit({ ...access, path: optionalString(args, 'path'), message: requireString(args, 'message'), all: optionalBoolean(args, 'all') }),
+    },
+    {
+      name: 'git_commit_verified',
+      description: 'Verify the project, stage only explicit paths, and create a local commit. Refuses pre-existing staged changes so unrelated work cannot be committed accidentally.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          paths: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Explicit repository paths to include.' },
+          message: { type: 'string', description: 'Commit message.' },
+          profile: { type: 'string', enum: ['fast', 'normal', 'strict'], description: 'Verification depth; defaults to normal.' },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: 660000, description: 'Timeout per verification command.' },
+        },
+        required: ['paths', 'message'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      handler: async (args) => gitCommitVerified({
+        ...access,
+        path: optionalString(args, 'path'),
+        paths: optionalStringArray(args, 'paths') ?? [],
+        message: requireString(args, 'message'),
+        profile: optionalVerificationProfile(args),
+        timeoutMs: optionalInteger(args, 'timeout_ms') ?? context.maxTimeoutMs,
+      }),
     },
     {
       name: 'git_checkout',

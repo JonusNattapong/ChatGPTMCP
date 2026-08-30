@@ -79,7 +79,7 @@ chatgpt-local up
 chatgpt-local status
 ```
 
-Lifecycle commands:
+Lifecycle and diagnostics commands:
 
 ```text
 chatgpt-local up
@@ -87,17 +87,26 @@ chatgpt-local down
 chatgpt-local restart
 chatgpt-local status
 chatgpt-local doctor
+chatgpt-local check
+chatgpt-local config show
+chatgpt-local version
 ```
 
 The underlying `scripts/` commands remain available for debugging, but normal operation should use `chatgpt-local`.
 
-Continue only when the status reports:
+`chatgpt-local setup` creates a local, Git-ignored `.chatgpt-machine/config.json`. It controls the workspace root, `workspace` vs `unrestricted` access mode, policy, approval mode, and the supervisor hard deadline. Use `chatgpt-local config show` to inspect the effective local settings; `config reset` restores the defaults.
+
+The tunnel-facing stdio entry point is `dist/supervisor.js`. It runs `dist/index.js` as an isolated MCP worker. If that worker crashes or stops answering past the hard deadline, the supervisor returns a recoverable error, restarts the worker, replays MCP initialization, and keeps the tunnel process alive. `chatgpt-local status` also reports the persisted worker generation and restart count from `.chatgpt-machine/supervisor.json`.
+
+Continue only when the tunnel status reports:
 
 ```text
 process_running : True
 healthy         : True
 ready           : True
 ```
+
+For a supervised runtime, `chatgpt-local status` should additionally report `supervisor: ready`.
 
 Stop or restart the connection when it is not needed:
 
@@ -122,12 +131,15 @@ After changing MCP code: run `npm run build`, stop/start the tunnel, and refresh
 Useful local checks:
 
 ```powershell
-chatgpt-local doctor          # same as node dist/index.js --doctor
-node dist/index.js --doctor
-node dist/index.js --check
+chatgpt-local doctor          # dependencies + workspace permissions
+chatgpt-local check           # effective config + v2 / 37-tool contract fingerprint
+npm run smoke                 # real MCP + supervisor recovery smoke tests
+npm run verify                # full tests + server contract check
 # Preview all mutations without executing them:
 node dist/index.js --root D:\Projects\Github --dry-run
 ```
+
+The current MCP contract is v2: 37 public tools with a SHA-256 fingerprint derived from tool names, schemas, and annotations. It adds `verify_changes` plus `git_commit_verified`; a fingerprint change is a signal to review the MCP surface before deployment.
 
 When using local HTTP transport, the redacted recent-call viewer is available at `http://127.0.0.1:8787/ui`. If `MCP_HTTP_TOKEN` is enabled, the UI endpoints require the same Bearer authorization header.
 

@@ -155,6 +155,18 @@ export async function gitAdd(options: GitOptions & { paths: string[] }) {
   return { path: cwd, staged: options.paths, status: await gitStatus({ ...options, path: cwd }) };
 }
 
+export async function gitUnstage(options: GitOptions & { paths: string[] }) {
+  const cwd = await resolveRepo(options);
+  if (!options.paths?.length) throw new ToolError('INVALID_ARGUMENT', '"paths" must contain at least one repository path.');
+  try {
+    await git(cwd, ['restore', '--staged', '--', ...options.paths]);
+  } catch {
+    // Repositories without an initial commit have no HEAD for `restore --staged`.
+    // Removing the entries from the index is the safe equivalent in that state.
+    await git(cwd, ['rm', '--cached', '--quiet', '--', ...options.paths]);
+  }
+  return { path: cwd, unstaged: options.paths, status: await gitStatus({ ...options, path: cwd }) };
+}
 export async function gitCommit(options: GitOptions & { message: string; all?: boolean }) {
   const cwd = await resolveRepo(options);
   if (!options.message.trim()) throw new ToolError('INVALID_ARGUMENT', '"message" must be a non-empty string.');

@@ -48,6 +48,7 @@ test('stdio MCP exposes and executes the machine tools', async () => {
       'git_branch',
       'git_checkout',
       'git_commit',
+      'git_commit_verified',
       'git_diff',
       'git_log',
       'git_push',
@@ -70,6 +71,7 @@ test('stdio MCP exposes and executes the machine tools', async () => {
       'stop_process',
       'system_info',
       'update_file',
+      'verify_changes',
       'write_file',
     ]);
 
@@ -79,8 +81,15 @@ test('stdio MCP exposes and executes the machine tools', async () => {
     assert.deepEqual(progress, [0, 1]);
     const statusPayload = JSON.parse((status.content as Array<{ text: string }>)[0].text);
     assert.equal(statusPayload.ok, true);
-    assert.equal(statusPayload.accessMode, 'UNRESTRICTED_MACHINE');
-    assert.deepEqual(statusPayload.tools, listed.tools.map((tool) => tool.name));
+    assert.equal(statusPayload.status, 'unsupervised');
+    assert.equal(statusPayload.workspace.root, root);
+    assert.equal(statusPayload.tools, undefined);
+    assert.equal(statusPayload.managedProcesses, undefined);
+
+    const detailed = await client.callTool({ name: 'machine_status', arguments: { detailed: true } });
+    const detailedPayload = JSON.parse((detailed.content as Array<{ text: string }>)[0].text);
+    assert.equal(detailedPayload.accessMode, 'UNRESTRICTED_MACHINE');
+    assert.deepEqual(detailedPayload.tools, listed.tools.map((tool) => tool.name));
 
     const prompts = await client.listPrompts();
     assert.equal(prompts.prompts[0]?.name, 'safe-edit-loop');

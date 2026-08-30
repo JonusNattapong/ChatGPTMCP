@@ -75,7 +75,7 @@ chatgpt-local up
 chatgpt-local status
 ```
 
-คำสั่ง lifecycle หลัก:
+คำสั่ง lifecycle และ diagnostics หลัก:
 
 ```text
 chatgpt-local up
@@ -83,17 +83,26 @@ chatgpt-local down
 chatgpt-local restart
 chatgpt-local status
 chatgpt-local doctor
+chatgpt-local check
+chatgpt-local config show
+chatgpt-local version
 ```
 
 คำสั่งใน `scripts/` ยังใช้สำหรับ debug ได้ แต่การใช้งานปกติควรใช้ `chatgpt-local`
 
-ดำเนินการต่อเมื่อ status แสดงว่า:
+`chatgpt-local setup` จะสร้าง `.chatgpt-machine/config.json` แบบ local และถูก Git ignore ไว้ ใช้กำหนด workspace root, access mode แบบ `workspace` หรือ `unrestricted`, policy, approval mode และ hard deadline ของ supervisor ตรวจค่าที่ใช้อยู่ด้วย `chatgpt-local config show` และคืนค่า default ด้วย `config reset`
+
+ฝั่ง tunnel จะเข้า MCP ผ่าน `dist/supervisor.js` ซึ่งรัน `dist/index.js` เป็น worker แยก process หาก worker crash หรือค้างเกิน hard deadline supervisor จะคืน recoverable error, restart worker, replay MCP initialization และรักษา tunnel process หลักไว้ `chatgpt-local status` จะแสดง worker generation และจำนวน restart จาก `.chatgpt-machine/supervisor.json` ด้วย
+
+ดำเนินการต่อเมื่อ tunnel status แสดงว่า:
 
 ```text
 process_running : True
 healthy         : True
 ready           : True
 ```
+
+สำหรับ supervised runtime ควรเห็น `supervisor: ready` เพิ่มด้วย
 
 เมื่อต้องการหยุดหรือ restart การเชื่อมต่อ:
 
@@ -117,12 +126,15 @@ chatgpt-local restart   # refresh แบบ detached (log อยู่ที่ 
 คำสั่งตรวจสอบในเครื่องที่มีประโยชน์:
 
 ```powershell
-chatgpt-local doctor          # เทียบเท่า node dist/index.js --doctor
-node dist/index.js --doctor
-node dist/index.js --check
+chatgpt-local doctor          # ตรวจ dependencies + permission ของ workspace
+chatgpt-local check           # ตรวจ effective config + fingerprint ของ contract v2 / 37 tools
+npm run smoke                 # ทดสอบ MCP จริง + supervisor recovery
+npm run verify                # full test + server contract check
 # Preview mutation ทั้งหมดโดยไม่เขียนจริง:
 node dist/index.js --root D:\Projects\Github --dry-run
 ```
+
+MCP contract ปัจจุบันเป็น v2 มี public tools 37 ตัว พร้อม SHA-256 contract fingerprint ที่คำนวณจากชื่อ, schema และ annotations โดยเพิ่ม `verify_changes` และ `git_commit_verified`; หาก fingerprint เปลี่ยนควรตรวจ MCP surface ก่อน deploy
 
 เมื่อใช้ local HTTP transport สามารถดู recent-call viewer ที่ทำ redaction แล้วได้ที่ `http://127.0.0.1:8787/ui` หากเปิด `MCP_HTTP_TOKEN` endpoint ของ UI จะต้องใช้ Bearer authorization header เดียวกัน
 

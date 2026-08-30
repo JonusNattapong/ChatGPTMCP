@@ -62,7 +62,7 @@
       <section id="architecture">
         <div class="eyebrow">01 / Request path</div>
         <h2>One client call, consistent gates</h2>
-        <p>The server works through stdio or Streamable HTTP. A registry validates the tool name and arguments before the shared path policy, preconditions, idempotency cache, and handler can touch the host. It also advertises prompts, resources, path completions, progress notifications, and compatibility logging.</p>
+        <p>Streamable HTTP enters the MCP server directly. Tunnel stdio enters through <code>src/supervisor.ts</code>, which isolates <code>src/index.ts</code> in a worker process and restarts/reinitializes that worker after a crash or hard request deadline. Inside the worker, one registry validates the tool name and arguments before policy, preconditions, idempotency, and handlers can touch the host.</p>
         <img class="diagram" src="architecture.svg" alt="MCP architecture diagram">
         <img class="diagram" src="request-flow.svg" alt="Request lifecycle diagram">
         <div class="callout">The tunnel is transport plumbing. The MCP server itself is not tied to a specific ChatGPT UI and can serve any compatible client.</div>
@@ -77,7 +77,8 @@
           <article class="card"><strong>Run (6)</strong> <code>shell_command</code>, <code>start_process</code>, <code>process_status</code>, <code>read_process_output</code>, <code>stop_process</code>, <code>process_write</code>. A timed-out shell call can promote itself into the managed registry instead of losing the job.</article>
           <article class="card"><strong>Git (9)</strong> <code>git_status</code>, <code>git_diff</code>, <code>git_log</code>, <code>git_show</code>, <code>git_branch</code>, <code>git_add</code>, <code>git_commit</code>, <code>git_checkout</code>, <code>git_push</code></article>
           <article class="card"><strong>System (6)</strong> <code>system_info</code>, <code>list_processes</code>, <code>list_ports</code>, <code>environment_info</code>, <code>disk_info</code>, <code>network_info</code></article>
-          <article class="card"><strong>Image + Audit (3)</strong> <code>save_image_from_url</code>, <code>audit_recent</code>, <code>audit_search</code> — 35 tools total, listed by <code>machine_status</code> from the registry.</article>
+          <article class="card"><strong>Image + Audit (3)</strong> <code>save_image_from_url</code>, <code>audit_recent</code>, <code>audit_search</code></article>
+          <article class="card"><strong>Verified workflow (2)</strong> <code>verify_changes</code> runs <code>fast | normal | strict</code> project gates; <code>git_commit_verified</code> verifies first, refuses an existing staging area, stages only explicit paths, and commits locally. Push remains a separate approval/network boundary. — 37 tools total.</article>
         </div>
         <h3>Concurrency guard</h3>
         <p>File reads return a SHA-256 digest. Writes can pass <code>expected_sha256</code>, converting a stale update into <code>PRECONDITION_FAILED</code> instead of silently overwriting a newer edit.</p>
@@ -102,26 +103,30 @@
 
       <section id="transport">
         <div class="eyebrow">04 / Transport</div>
-        <h2>Stdio for local clients; HTTP for the tunnel</h2>
+        <h2>Supervised stdio for the tunnel; HTTP as an alternate transport</h2>
         <pre><code>node dist/index.js --http --http-port 8787 --root D:\Projects\Github</code></pre>
-        <p>Health endpoints are <code>/healthz</code> and <code>/readyz</code>; MCP traffic is served at <code>/mcp</code>. The dependency-free <code>/ui</code> page reads the last 50 redacted audit events from <code>/ui/audit</code>. Binding HTTP beyond loopback requires a bearer token, which also protects the UI endpoints.</p>
+        <p><code>/healthz</code> reports process liveness; <code>/readyz</code> reports readiness and can return 503 while the HTTP runtime is starting. MCP traffic is served at <code>/mcp</code>. The dependency-free <code>/ui</code> page reads the last 50 redacted audit events from <code>/ui/audit</code>. Binding HTTP beyond loopback requires a bearer token, which also protects the UI endpoints.</p>
         <pre><code>node dist/index.js --http --http-host 0.0.0.0 --http-token "&lt;secret&gt;" --root D:\Projects\Github</code></pre>
       </section>
 
       <section id="operations">
         <div class="eyebrow">05 / Runtime operations</div>
         <h2>Managed processes and tunnel lifecycle</h2>
-        <p>Use <code>start_process</code> for servers and watchers. It returns a PID; <code>process_status</code>, <code>read_process_output</code>, and <code>stop_process</code> handle the lifecycle. Output capture is bounded and process tracking is session-local.</p>
+        <p>Use <code>start_process</code> for servers and watchers. It returns a PID; <code>process_status</code>, <code>read_process_output</code>, and <code>stop_process</code> handle the lifecycle. Output capture is bounded, while process metadata and logs are persisted under <code>.chatgpt-machine/</code> so a restarted MCP worker can recover inspection and stop operations.</p>
         <pre><code>start_process(command="npm run dev") -> pid
 read_process_output(pid, wait_ms=5000) -> stdout / stderr
 stop_process(pid) -> stops the process tree</code></pre>
         <p>Normal operation uses the operator CLI (after <code>npm link</code>):</p>
-        <pre><code>chatgpt-local setup   # preflight checks
-chatgpt-local up      # build + start-tunnel
-chatgpt-local status
-chatgpt-local restart # detached refresh via refresh-tunnel
-chatgpt-local down    # stop-tunnel
-chatgpt-local doctor  # node dist/index.js --doctor</code></pre>
+        <pre><code>chatgpt-local setup       # initialize local config + preflight
+chatgpt-local up          # build + start supervised tunnel
+chatgpt-local status      # tunnel + supervisor generation/restarts
+chatgpt-local restart     # detached refresh via refresh-tunnel
+chatgpt-local down        # stop-tunnel
+chatgpt-local doctor      # dependencies + workspace permissions
+chatgpt-local check       # effective runtime + v2 contract fingerprint
+chatgpt-local config show
+chatgpt-local version</code></pre>
+        <p>Local runtime settings live in Git-ignored <code>.chatgpt-machine/config.json</code>. <code>chatgpt-local use &lt;path&gt;</code> persists the active workspace; status reports the live worker root and explicitly marks when a restart is required. The v2 contract fingerprint is derived from the 37 public tool names, schemas, and annotations, making MCP-surface drift visible during deployment checks.</p>
         <p>Underlying scripts remain available for debugging (<code>.ps1</code> on Windows, <code>.sh</code> on macOS/Ubuntu/WSL):</p>
         <pre><code>.\scripts\start-tunnel.ps1     # or ./scripts/start-tunnel.sh
 .\scripts\status-tunnel.ps1    # or ./scripts/status-tunnel.sh
@@ -139,9 +144,13 @@ chatgpt-local doctor  # node dist/index.js --doctor</code></pre>
 npm test</code></pre>
         <p>The test suite covers path containment, transactional edits, file preconditions, code search, image validation, timeout promotion, managed process lifecycle, Git inspection, MCP prompt/resource discovery, and stdio behavior. Use <code>--doctor</code> for dependency checks and <code>--dry-run</code> to suppress every mutating tool at the server gate.</p>
         <table><thead><tr><th>File</th><th>Responsibility</th></tr></thead><tbody>
-          <tr><td><code>src/index.ts</code></td><td>CLI parsing (--root, --dangerously-open-machine, --http, --check, --doctor, --dry-run), stdio/HTTP transports, response envelope.</td></tr>
-          <tr><td><code>src/cli.ts</code></td><td>Operator CLI <code>chatgpt-local</code> (setup/up/down/restart/status/doctor), preflight, script selection per OS.</td></tr>
-          <tr><td><code>src/tools.ts</code></td><td>Tool registry (35 tools), schemas, and handlers.</td></tr>
+          <tr><td><code>src/supervisor.ts</code></td><td>Tunnel-facing stdio proxy, hard request deadline, worker restart/reinitialize, generation and persisted supervisor state.</td></tr>
+          <tr><td><code>src/index.ts</code></td><td>MCP worker, CLI parsing (--root, --dangerously-open-machine, --http, --check, --doctor, --dry-run), stdio/HTTP transports, response envelope and HTTP health/readiness.</td></tr>
+          <tr><td><code>src/cli.ts</code></td><td>Operator CLI <code>chatgpt-local</code> (setup/up/down/restart/status/doctor/check/config/version), preflight and script selection per OS.</td></tr>
+          <tr><td><code>src/config.ts</code></td><td>Git-ignored local runtime configuration and tunnel environment mapping.</td></tr>
+          <tr><td><code>src/contract.ts</code></td><td>Versioned 37-tool public contract manifest (v2) and deterministic SHA-256 fingerprint.</td></tr>
+          <tr><td><code>src/tools.ts</code></td><td>Tool registry (37 tools), schemas, handlers, compact/expanded machine status, and contract metadata.</td></tr>
+          <tr><td><code>src/verification.ts</code></td><td>Detected fast/normal/strict project verification and verified local commit transaction.</td></tr>
           <tr><td><code>src/file-tools.ts</code></td><td>Text, directory, image, and code-search operations.</td></tr>
           <tr><td><code>src/shell-tools.ts</code></td><td>Path policy, shell execution (caps, timeout, encoding), apply_patch (Codex format).</td></tr>
           <tr><td><code>src/process-tools.ts</code></td><td>Background process registry and log capture (4 MiB cap, offsets, wait_ms).</td></tr>
