@@ -52,7 +52,7 @@ Do not introduce orchestration, planning, memory, agent delegation, or a generic
 
 Treat these files as authoritative, in this order:
 
-1. `src/tools.ts` — the 37-tool registry: schema, description, argument validation, and handler for every tool.
+1. `src/tools.ts` — the 41-tool registry: schema, description, argument validation, and handler for every tool.
 2. `src/contract.ts` — the versioned public tool contract and deterministic contract fingerprint.
 3. `src/supervisor.ts` — the tunnel-facing stdio worker boundary, hard deadline, restart/reinitialize logic, and supervisor state.
 4. `src/index.ts` — MCP worker, transports, HTTP authentication/readiness, policy gates, and the shared result envelope.
@@ -215,7 +215,6 @@ Helper scripts (`.ps1` on Windows, `.sh` on macOS/Ubuntu/WSL):
 .\scripts\start-tunnel.ps1
 .\scripts\status-tunnel.ps1
 .\scripts\stop-tunnel.ps1
-.\scripts\refresh-tunnel.ps1
 ```
 
 Operator CLI â€” normal entry point that wraps the scripts above (after `npm link`):
@@ -229,11 +228,13 @@ chatgpt-local status
 chatgpt-local doctor
 ```
 
-The operator CLI bin is `chatgpt-local` (`src/cli.ts` â†’ `dist/cli.js`); the tunnel runtime alias remains `chatgpt-machine` â€” they are distinct. `refresh-tunnel.*` restarts the tunnel in a detached worker and logs to `.tunnel/refresh-tunnel.log`. Tests for the operator CLI live in `src/cli.test.ts`.
+The operator CLI bin is `chatgpt-local` (`src/cli.ts` â†’ `dist/cli.js`); the tunnel runtime alias remains `chatgpt-machine` â€” they are distinct. `chatgpt-local restart` rebuilds, stops, and starts the tunnel directly. Tests for the operator CLI live in `src/cli.test.ts`.
 
 Do not commit decrypted runtime keys.
 
-The runtime key file under `.tunnel/` is machine-local and Git-ignored. `start-tunnel.ps1` (and `refresh-tunnel.ps1`) must continue to remove `CONTROL_PLANE_API_KEY` from the process environment in `finally`.
+The runtime key file under `.tunnel/` is machine-local and Git-ignored. `start-tunnel.ps1` must continue to remove `CONTROL_PLANE_API_KEY` from the process environment in `finally`.
+
+Multi-machine routing is allowlist-based. The gateway reads `.chatgpt-machine/machines.json`; tool callers may select only a registered machine by id/name/hostname/alias/IP/host:port. Never turn `machine_call` into an arbitrary URL fetch. Registry entries may contain only environment-variable names for tokens, never token values.
 
 Avoid changing tunnel IDs, organization IDs, aliases, or profiles unless the task explicitly concerns tunnel provisioning.
 

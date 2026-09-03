@@ -4,13 +4,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configEnvironment, initLocalConfig, loadLocalConfig, localConfigPath, setWorkspaceRoot, type LocalConfig } from './config.js';
+import { machinesConfigPath, readMachineRegistry, removeMachine, upsertMachine } from './machine-router.js';
 import { APP_VERSION } from './version.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, '..');
 const scriptsDir = path.join(projectRoot, 'scripts');
 
-type Command = 'setup' | 'up' | 'down' | 'restart' | 'status' | 'use' | 'workspace' | 'doctor' | 'check' | 'config' | 'version' | 'help';
+type Command = 'setup' | 'up' | 'down' | 'restart' | 'status' | 'use' | 'workspace' | 'machine' | 'doctor' | 'check' | 'config' | 'version' | 'help';
 
 export function normalizeCommand(value: string | undefined): string {
   if (value === undefined || value === '--help' || value === '-h') return 'help';
@@ -19,7 +20,7 @@ export function normalizeCommand(value: string | undefined): string {
 }
 
 export function usage(): string {
-  return `chatgpt-local ${APP_VERSION}\n\nUsage:\n  chatgpt-local setup\n  chatgpt-local up\n  chatgpt-local down\n  chatgpt-local restart\n  chatgpt-local status\n  chatgpt-local use <path>\n  chatgpt-local workspace [path]\n  chatgpt-local doctor\n  chatgpt-local check\n  chatgpt-local config [show|init|reset]\n  chatgpt-local version\n\n`;
+  return `chatgpt-local ${APP_VERSION}\n\nUsage:\n  chatgpt-local setup\n  chatgpt-local up\n  chatgpt-local down\n  chatgpt-local restart\n  chatgpt-local status\n  chatgpt-local use <path>\n  chatgpt-local workspace [path]\n  chatgpt-local machine list\n  chatgpt-local machine add <id> <host[:port]|url> [--token-env VAR] [--name NAME] [--hostname HOST] [--alias VALUE]\n  chatgpt-local machine remove <id>\n  chatgpt-local doctor\n  chatgpt-local check\n  chatgpt-local config [show|init|reset]\n  chatgpt-local version\n\n`;
 }
 
 export function run(program: string, args: string[], cwd = projectRoot, env?: NodeJS.ProcessEnv): Promise<void> {
@@ -50,7 +51,7 @@ function script(name: string): { program: string; args: string[] } {
 
 async function runScript(name: string, config = loadLocalConfig(projectRoot)): Promise<void> {
   const { program, args } = script(name);
-  await run(program, args, projectRoot, configEnvironment(config));
+  await run(program, args, projectRoot, { ...configEnvironment(config), MCP_MACHINES_FILE: machinesConfigPath(projectRoot) });
 }
 
 export function preflight(root: string): string[] {
@@ -74,6 +75,7 @@ function serverArgs(config: LocalConfig): string[] {
     '--root', config.workspaceRoot,
     '--policy', config.policy,
     '--approval-mode', config.approvalMode,
+    '--machines-file', machinesConfigPath(projectRoot),
     ...(config.accessMode === 'unrestricted' ? ['--dangerously-open-machine'] : []),
   ];
 }
@@ -161,7 +163,8 @@ async function main(): Promise<void> {
       break;
     case 'restart':
       await runNpm(['run', 'build']);
-      await runScript('refresh-tunnel');
+      await runScript('stop-tunnel');
+      await runScript('start-tunnel');
       break;
     case 'status': {
       const config = loadLocalConfig(projectRoot);
@@ -183,6 +186,46 @@ async function main(): Promise<void> {
         showWorkspaceRuntimeHint(updated);
       }
       break;
+    }
+    case 'machine': {
+      const action = process.argv[3] ?? 'list';
+      const file = machinesConfigPath(projectRoot);
+      if (action === 'list') {
+        process.stdout.write(JSON.stringify({ file, ...readMachineRegistry(file) }, null, 2) + '\n');
+        break;
+      }
+      if (action === 'remove') {
+        const id = process.argv[4];
+        if (!id) throw new Error('machine remove requires <id>.');
+        if (!removeMachine(file, id)) throw new Error(`machine not found: ${id}`);
+        process.stdout.write(`Removed machine: ${id}\n`);
+        break;
+      }
+      if (action === 'add') {
+        const id = process.argv[4];
+        const endpoint = process.argv[5];
+        if (!id || !endpoint) throw new Error('machine add requires <id> <host[:port]|url>.');
+        const rest = process.argv.slice(6);
+        let tokenEnv: string | undefined;
+        let name: string | undefined;
+        let hostname: string | undefined;
+        const aliases: string[] = [];
+        for (let i = 0; i < rest.length; i++) {
+          const flag = rest[i];
+          const value = rest[++i];
+          if (!value) throw new Error(`${flag} requires a value.`);
+          if (flag === '--token-env') tokenEnv = value;
+          else if (flag === '--name') name = value;
+          else if (flag === '--hostname') hostname = value;
+          else if (flag === '--alias') aliases.push(value);
+          else throw new Error(`Unknown machine add option: ${flag}`);
+        }
+        const machine = upsertMachine(file, { id, endpoint, tokenEnv, name, hostname, aliases: aliases.length ? aliases : undefined });
+        process.stdout.write(JSON.stringify({ file, machine }, null, 2) + '\n');
+        process.stdout.write('Restart the gateway/tunnel only if token environment variables changed; registry edits are loaded per call.\n');
+        break;
+      }
+      throw new Error('machine action must be list, add, or remove.');
     }
     case 'doctor': {
       await runNpm(['run', 'build']);

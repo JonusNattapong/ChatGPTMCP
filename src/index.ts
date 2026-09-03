@@ -41,6 +41,7 @@ interface Options {
   httpHost: string;
   httpPort: number;
   httpToken?: string;
+  machinesFile?: string;
   policy: string;
   approvalMode: 'mrtr' | 'deny';
   auditFile?: string;
@@ -72,6 +73,7 @@ export function parseOptions(args: string[]): Options {
     httpHost: '127.0.0.1',
     httpPort: 8787,
     httpToken: process.env.MCP_HTTP_TOKEN,
+    machinesFile: process.env.MCP_MACHINES_FILE,
     policy: process.env.MCP_POLICY ?? 'admin',
     approvalMode: 'mrtr',
     auditFile: process.env.MCP_AUDIT_FILE,
@@ -89,6 +91,7 @@ export function parseOptions(args: string[]): Options {
     else if (arg === '--http-host') options.httpHost = valueAfter(args, index++, arg);
     else if (arg === '--http-port') options.httpPort = Number(valueAfter(args, index++, arg));
     else if (arg === '--http-token') options.httpToken = valueAfter(args, index++, arg);
+    else if (arg === '--machines-file') options.machinesFile = valueAfter(args, index++, arg);
     else if (arg === '--policy') options.policy = valueAfter(args, index++, arg);
     else if (arg === '--approval-mode') options.approvalMode = valueAfter(args, index++, arg) as Options['approvalMode'];
     else if (arg === '--audit-file') options.auditFile = valueAfter(args, index++, arg);
@@ -104,6 +107,7 @@ export function parseOptions(args: string[]): Options {
         `  --http-host <host>            HTTP bind host (default: 127.0.0.1)\n` +
         `  --http-port <port>            HTTP port (default: 8787)\n` +
         `  --http-token <token>          Optional Bearer token; required off loopback\n` +
+        `  --machines-file <path>        JSON registry of allowed remote machine nodes\n` +
         `  --policy <profile|file>       admin (default), developer, readonly, or a JSON policy file\n` +
         `  --approval-mode <mode>        mrtr (default) or deny when a policy requires approval\n` +
         `  --audit-file <path>           NDJSON audit log (default: <root>/.chatgpt-machine/audit.ndjson)\n` +
@@ -117,6 +121,7 @@ export function parseOptions(args: string[]): Options {
 
   options.root = path.resolve(options.root);
   if (options.auditFile) options.auditFile = path.resolve(options.root, options.auditFile);
+  if (options.machinesFile) options.machinesFile = path.resolve(options.machinesFile);
   if (!Number.isInteger(options.maxTimeoutMs) || options.maxTimeoutMs < 1_000) {
     throw new Error('--max-timeout must be an integer of at least 1000 milliseconds.');
   }
@@ -157,6 +162,7 @@ function createMcpServer(runtime: Runtime): Server {
     policyName: policy.name,
     approvalMode: options.approvalMode,
     audit,
+    machinesFile: options.machinesFile,
   });
   const byName = new Map<string, ToolSpec>(specs.map((spec) => [spec.name, spec]));
   const server = new Server(
@@ -369,7 +375,7 @@ async function main(): Promise<void> {
     key: randomBytes(32),
     ttlSeconds: 5 * 60,
   });
-  const validationSpecs = createToolSpecs({ root: options.root, unrestricted: options.dangerouslyOpenMachine, maxTimeoutMs: options.maxTimeoutMs, policyName: policy.name, approvalMode: options.approvalMode, audit });
+  const validationSpecs = createToolSpecs({ root: options.root, unrestricted: options.dangerouslyOpenMachine, maxTimeoutMs: options.maxTimeoutMs, policyName: policy.name, approvalMode: options.approvalMode, audit, machinesFile: options.machinesFile });
   validatePolicyConfig(policy, validationSpecs.map((spec) => spec.name));
   const runtime: Runtime = { options, policy, audit, approvalState, idempotency: new IdempotencyStore() };
   if (options.doctor) {
@@ -415,6 +421,7 @@ async function main(): Promise<void> {
       policyName: policy.name,
       approvalMode: options.approvalMode,
       audit,
+      machinesFile: options.machinesFile,
     });
     const contract = createContractManifest(specs);
     process.stdout.write(JSON.stringify({

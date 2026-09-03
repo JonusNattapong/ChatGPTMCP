@@ -4,6 +4,10 @@ All notable changes to ChatGPT Machine MCP are documented here.
 
 ## Unreleased
 
+- Added an allowlisted multi-machine gateway with `machines_list`, `machine_probe`, `machine_tools`, and `machine_call`. Nodes can be selected by id, name, hostname, alias, IP, or host:port; public plaintext HTTP endpoints are rejected and bearer tokens remain environment-only.
+- Added `chatgpt-local machine list|add|remove`, a Git-ignored `.chatgpt-machine/machines.json` registry, per-node HTTP health checks, and remote MCP tool discovery/calls. The `developer` policy approval-gates `machine_call`, while remote nodes still enforce their own policy and audit boundaries.
+- Bumped the public MCP contract to v3 with 41 tools.
+- Simplified `chatgpt-local restart` to an explicit stop/start sequence and removed the detached `refresh-tunnel.*` helper, avoiding a PowerShell self-spawn pattern that endpoint security could quarantine.
 - Added a bounded tunnel watchdog for Windows and Bash. While a tunnel is intentionally active, two consecutive unhealthy runtime checks reconnect it; `chatgpt-local down` stops the watchdog first. The real-supervisor smoke test now keeps its state in its own temporary directory.
 - Hardened the supervised stdio runtime with real `closed`/`open`/`half_open` circuit-breaker states, generation-safe recovery timers, and process-tree termination on Windows and POSIX.
 - Persisted the live worker root and circuit diagnostics so `chatgpt-local status` can detect when a changed active workspace requires a runtime restart.

@@ -19,7 +19,7 @@ test('stdio MCP exposes and executes the machine tools', async () => {
       '--dangerously-open-machine',
     ],
     env: Object.fromEntries(
-      Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && !['MCP_SUPERVISED', 'MCP_SUPERVISOR_STATE_FILE'].includes(entry[0])),
     ),
     stderr: 'pipe',
   });
@@ -58,7 +58,11 @@ test('stdio MCP exposes and executes the machine tools', async () => {
       'list_directory',
       'list_ports',
       'list_processes',
+      'machine_call',
+      'machine_probe',
       'machine_status',
+      'machine_tools',
+      'machines_list',
       'network_info',
       'process_status',
       'process_write',
@@ -164,7 +168,7 @@ test('MCP 2026-07-28 MRTR approval executes an approval-gated tool after elicita
       'developer',
     ],
     env: Object.fromEntries(
-      Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && !['MCP_SUPERVISED', 'MCP_SUPERVISOR_STATE_FILE'].includes(entry[0])),
     ),
     stderr: 'pipe',
   });

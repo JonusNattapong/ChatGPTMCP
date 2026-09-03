@@ -86,6 +86,7 @@ chatgpt-local up
 chatgpt-local down
 chatgpt-local restart
 chatgpt-local status
+chatgpt-local machine list
 chatgpt-local doctor
 chatgpt-local check
 chatgpt-local config show
@@ -114,7 +115,7 @@ Stop or restart the connection when it is not needed:
 
 ```powershell
 chatgpt-local down      # or .\scripts\stop-tunnel.ps1
-chatgpt-local restart   # detached refresh (logs to .tunnel/refresh-tunnel.log)
+chatgpt-local restart   # rebuild, stop, then start the tunnel
 ```
 
 ### 6. Add it in ChatGPT Web
@@ -134,14 +135,38 @@ Useful local checks:
 
 ```powershell
 chatgpt-local doctor          # dependencies + workspace permissions
-chatgpt-local check           # effective config + v2 / 37-tool contract fingerprint
+chatgpt-local check           # effective config + v3 / 41-tool contract fingerprint
 npm run smoke                 # real MCP + supervisor recovery smoke tests
 npm run verify                # full tests + server contract check
 # Preview all mutations without executing them:
 node dist/index.js --root D:\Projects\Github --dry-run
 ```
 
-The current MCP contract is v2: 37 public tools with a SHA-256 fingerprint derived from tool names, schemas, and annotations. It adds `verify_changes` plus `git_commit_verified`; a fingerprint change is a signal to review the MCP surface before deployment.
+The current MCP contract is v3: 41 public tools with a SHA-256 fingerprint derived from tool names, schemas, and annotations. It adds the multi-machine routing surface (`machines_list`, `machine_probe`, `machine_tools`, and `machine_call`) while preserving all existing local tools.
+
+## Multi-machine routing
+
+One tunnel can act as a gateway to multiple registered MCP nodes. Remote nodes are selected explicitly by machine id, name, hostname, alias, IP address, or `host:port`; arbitrary unregistered URLs are never accepted from a tool call.
+
+Register nodes on the gateway:
+
+```powershell
+chatgpt-local machine add server 192.168.1.20:8787 --hostname HOME-SERVER --alias buildbox --token-env MCP_NODE_SERVER_TOKEN
+chatgpt-local machine list
+```
+
+`machines.json` lives under the Git-ignored `.chatgpt-machine/` directory. `tokenEnv` stores only the environment-variable name, never the bearer token itself. Set that environment variable on the gateway before starting the tunnel.
+
+Run each remote node with Streamable HTTP and a bearer token when binding outside loopback:
+
+```powershell
+$env:MCP_HTTP_TOKEN = '<node-secret>'
+node dist/index.js --http --http-host 0.0.0.0 --http-port 8787 --http-token $env:MCP_HTTP_TOKEN --root D:\Projects --dangerously-open-machine
+```
+
+Keep the node port restricted to the trusted LAN, VPN, or Tailscale network. Plain HTTP is accepted by the gateway only for local/private addresses; public endpoints must use HTTPS. The `developer` gateway policy approval-gates `machine_call`, and the selected remote node independently enforces its own workspace, policy, approval, and audit rules.
+
+From ChatGPT, use `machines_list`, then `machine_probe`, `machine_tools`, or `machine_call`. For example, `machine_call(machine="192.168.1.20", tool="git_status", arguments={...})` routes only to the matching registered node. Existing tools such as `read_file` continue to operate on the gateway machine itself.
 
 When using local HTTP transport, the redacted recent-call viewer is available at `http://127.0.0.1:8787/ui`. If `MCP_HTTP_TOKEN` is enabled, the UI endpoints require the same Bearer authorization header.
 

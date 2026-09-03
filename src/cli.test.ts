@@ -8,7 +8,7 @@ import { normalizeCommand, preflight, resolveScript, run, usage, workspaceNeedsR
 test('usage documents every operator command', () => {
   const text = usage();
   assert.match(text, /Usage:/);
-  for (const command of ['setup', 'up', 'down', 'restart', 'status', 'doctor', 'use', 'workspace']) {
+  for (const command of ['setup', 'up', 'down', 'restart', 'status', 'doctor', 'use', 'workspace', 'machine']) {
     assert.match(text, new RegExp(`chatgpt-local ${command}`));
   }
 });
@@ -47,7 +47,7 @@ test('resolveScript selects the platform-native launcher', () => {
 });
 
 test('resolveScript maps every tunnel lifecycle script', () => {
-  for (const name of ['start-tunnel', 'stop-tunnel', 'status-tunnel', 'refresh-tunnel']) {
+  for (const name of ['start-tunnel', 'stop-tunnel', 'status-tunnel']) {
     const win = resolveScript('win32', '/scripts', name);
     assert.ok(win.args[win.args.length - 1].endsWith(`${name}.ps1`));
     const sh = resolveScript('linux', '/scripts', name);

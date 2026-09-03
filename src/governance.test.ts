@@ -27,11 +27,15 @@ test('readonly policy denies mutations and developer policy approval-gates high-
     assert.equal(evaluatePolicy(readonly, byName.get('read_file')!, { path: 'a.txt' }, root).allowed, true);
     assert.equal(evaluatePolicy(readonly, byName.get('write_file')!, { path: 'a.txt', content: 'x' }, root).allowed, false);
     assert.equal(evaluatePolicy(readonly, byName.get('shell_command')!, { command: 'echo hi' }, root).allowed, false);
+    assert.equal(evaluatePolicy(readonly, byName.get('machine_call')!, { machine: 'server', tool: 'read_file', arguments: { path: 'README.md' } }, root).allowed, false);
 
     const developer = loadPolicy('developer', root);
     const shell = evaluatePolicy(developer, byName.get('shell_command')!, { command: 'npm test', workdir: root }, root);
     assert.equal(shell.allowed, true);
     assert.equal(shell.requiresApproval, true);
+    const routed = evaluatePolicy(developer, byName.get('machine_call')!, { machine: 'server', tool: 'read_file', arguments: { path: 'README.md' } }, root);
+    assert.equal(routed.allowed, true);
+    assert.equal(routed.requiresApproval, true);
     assert.equal(evaluatePolicy(developer, byName.get('read_file')!, { path: 'README.md' }, root).requiresApproval, false);
     assert.equal(evaluatePolicy(loadPolicy('admin', root), byName.get('read_file')!, { path: '.env' }, root).allowed, false);
     assert.equal(evaluatePolicy(loadPolicy('admin', root), byName.get('read_file')!, { path: '.ssh/id_ed25519' }, root).allowed, false);

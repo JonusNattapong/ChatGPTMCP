@@ -27,6 +27,7 @@ export type ToolErrorCode =
   | 'PROCESS_NOT_MANAGED'
   | 'PROCESS_IO_UNAVAILABLE'
   | 'PATCH_INVALID'
+  | 'REMOTE_ERROR'
   | 'UNKNOWN_TOOL'
   | 'INTERNAL';
 

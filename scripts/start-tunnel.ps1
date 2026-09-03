@@ -13,13 +13,15 @@ $workspaceRoot = if ([string]::IsNullOrWhiteSpace($env:MCP_WORKSPACE_ROOT)) { Sp
 $accessMode = if ([string]::IsNullOrWhiteSpace($env:MCP_ACCESS_MODE)) { 'unrestricted' } else { $env:MCP_ACCESS_MODE }
 $policy = if ([string]::IsNullOrWhiteSpace($env:MCP_POLICY)) { 'admin' } else { $env:MCP_POLICY }
 $approvalMode = if ([string]::IsNullOrWhiteSpace($env:MCP_APPROVAL_MODE)) { 'mrtr' } else { $env:MCP_APPROVAL_MODE }
+$machinesFile = if ([string]::IsNullOrWhiteSpace($env:MCP_MACHINES_FILE)) { Join-Path $projectRoot '.chatgpt-machine\machines.json' } else { $env:MCP_MACHINES_FILE }
 $supervisorTimeout = if ([string]::IsNullOrWhiteSpace($env:MCP_SUPERVISOR_TIMEOUT_MS)) { '120000' } else { $env:MCP_SUPERVISOR_TIMEOUT_MS }
 $supervisorPath = (Join-Path $projectRoot 'dist\supervisor.js').Replace('\', '/')
 $watchdogScript = Join-Path $PSScriptRoot 'watch-tunnel.ps1'
 $watchdogPidPath = Join-Path $projectRoot '.tunnel\watch-tunnel.pid'
 $workspaceArg = $workspaceRoot.Replace('\', '/')
+$machinesArg = $machinesFile.Replace('\', '/')
 $openArg = if ($accessMode -eq 'workspace') { '' } else { ' --dangerously-open-machine' }
-$mcpCommand = "node $supervisorPath --supervisor-timeout $supervisorTimeout --root `"$workspaceArg`" --policy $policy --approval-mode $approvalMode$openArg"
+$mcpCommand = "node $supervisorPath --supervisor-timeout $supervisorTimeout --root `"$workspaceArg`" --policy $policy --approval-mode $approvalMode --machines-file `"$machinesArg`"$openArg"
 
 if (-not (Test-Path -LiteralPath $clientPath)) {
     throw "Tunnel client not found: $clientPath"

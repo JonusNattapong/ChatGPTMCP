@@ -24,6 +24,7 @@ workspace_root="${MCP_WORKSPACE_ROOT:-$(dirname "${project_root}")}"
 access_mode="${MCP_ACCESS_MODE:-unrestricted}"
 policy="${MCP_POLICY:-admin}"
 approval_mode="${MCP_APPROVAL_MODE:-mrtr}"
+machines_file="${MCP_MACHINES_FILE:-${project_root}/.chatgpt-machine/machines.json}"
 supervisor_timeout="${MCP_SUPERVISOR_TIMEOUT_MS:-120000}"
 if [[ "${platform}" == "Darwin" ]]; then
   runtime_key="$(security find-generic-password -a "${USER}" -s chatgpt-machine-mcp-tunnel -w)"
@@ -63,7 +64,7 @@ CONTROL_PLANE_API_KEY="${runtime_key}" "${client_path}" runtimes connect \
   --tunnel-id "${tunnel_id}" \
   --organization-id "${organization_id}" \
   --runtime-api-key env:CONTROL_PLANE_API_KEY \
-  --mcp-command "node ${project_root}/dist/supervisor.js --supervisor-timeout ${supervisor_timeout} --root ${workspace_root} --policy ${policy} --approval-mode ${approval_mode} $([[ ${access_mode} == unrestricted ]] && printf %s --dangerously-open-machine)"
+  --mcp-command "node ${project_root}/dist/supervisor.js --supervisor-timeout ${supervisor_timeout} --root \"${workspace_root}\" --policy ${policy} --approval-mode ${approval_mode} --machines-file \"${machines_file}\" $([[ ${access_mode} == unrestricted ]] && printf %s --dangerously-open-machine)"
 
 "${project_root}/scripts/status-tunnel.sh"
 

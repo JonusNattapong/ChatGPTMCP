@@ -82,6 +82,7 @@ chatgpt-local up
 chatgpt-local down
 chatgpt-local restart
 chatgpt-local status
+chatgpt-local machine list
 chatgpt-local doctor
 chatgpt-local check
 chatgpt-local config show
@@ -110,7 +111,7 @@ ready           : True
 
 ```powershell
 chatgpt-local down      # หรือ .\scripts\stop-tunnel.ps1
-chatgpt-local restart   # refresh แบบ detached (log อยู่ที่ .tunnel/refresh-tunnel.log)
+chatgpt-local restart   # build ใหม่ แล้ว stop/start tunnel
 ```
 
 ### 6. เพิ่ม MCP ใน ChatGPT Web
@@ -129,14 +130,38 @@ chatgpt-local restart   # refresh แบบ detached (log อยู่ที่ 
 
 ```powershell
 chatgpt-local doctor          # ตรวจ dependencies + permission ของ workspace
-chatgpt-local check           # ตรวจ effective config + fingerprint ของ contract v2 / 37 tools
+chatgpt-local check           # ตรวจ effective config + fingerprint ของ contract v3 / 41 tools
 npm run smoke                 # ทดสอบ MCP จริง + supervisor recovery
 npm run verify                # full test + server contract check
 # Preview mutation ทั้งหมดโดยไม่เขียนจริง:
 node dist/index.js --root D:\Projects\Github --dry-run
 ```
 
-MCP contract ปัจจุบันเป็น v2 มี public tools 37 ตัว พร้อม SHA-256 contract fingerprint ที่คำนวณจากชื่อ, schema และ annotations โดยเพิ่ม `verify_changes` และ `git_commit_verified`; หาก fingerprint เปลี่ยนควรตรวจ MCP surface ก่อน deploy
+MCP contract ปัจจุบันเป็น v3 มี public tools 41 ตัว พร้อม SHA-256 contract fingerprint ที่คำนวณจากชื่อ, schema และ annotations โดยเพิ่ม multi-machine routing ได้แก่ `machines_list`, `machine_probe`, `machine_tools` และ `machine_call` โดย tools เดิมที่ทำงานกับเครื่อง local ยังทำงานเหมือนเดิม
+
+## Multi-machine routing
+
+tunnel เดียวสามารถเป็น gateway ไปยัง MCP node หลายเครื่องได้ โดยเลือกเครื่องแบบ explicit ด้วย machine id, name, hostname, alias, IP หรือ `host:port` เท่านั้น ตัว tool ไม่สามารถส่ง URL ที่ไม่ได้ register ไว้แล้วให้ gateway ยิงออกไปเองได้
+
+เพิ่มเครื่องที่ gateway:
+
+```powershell
+chatgpt-local machine add server 192.168.1.20:8787 --hostname HOME-SERVER --alias buildbox --token-env MCP_NODE_SERVER_TOKEN
+chatgpt-local machine list
+```
+
+registry จะอยู่ที่ `.chatgpt-machine/machines.json` ซึ่งถูก Git ignore อยู่แล้ว ค่า `tokenEnv` เก็บเพียงชื่อ environment variable ไม่เก็บ bearer token จริงในไฟล์ ให้ตั้ง env var ดังกล่าวที่ gateway ก่อนเปิด tunnel
+
+แต่ละ remote node ให้เปิด Streamable HTTP และใช้ bearer token เมื่อ bind ออกนอก loopback:
+
+```powershell
+$env:MCP_HTTP_TOKEN = '<node-secret>'
+node dist/index.js --http --http-host 0.0.0.0 --http-port 8787 --http-token $env:MCP_HTTP_TOKEN --root D:\Projects --dangerously-open-machine
+```
+
+ควรเปิด port เฉพาะ LAN, VPN หรือ Tailscale ที่เชื่อถือได้ Gateway ยอมให้ plain HTTP เฉพาะ local/private address ส่วน public endpoint ต้องเป็น HTTPS นอกจากนี้ `developer` policy ฝั่ง gateway จะ approval-gate `machine_call` และ remote node ยังบังคับ workspace, policy, approval และ audit ของตัวเองอีกชั้น
+
+จาก ChatGPT ใช้ `machines_list` แล้วตามด้วย `machine_probe`, `machine_tools` หรือ `machine_call` เช่น `machine_call(machine="192.168.1.20", tool="git_status", arguments={...})` จะ route ไปเฉพาะ node ที่ register ตรงกับ IP นั้น ส่วน tools เดิมอย่าง `read_file` ยังทำงานบนเครื่อง gateway ตามปกติ
 
 เมื่อใช้ local HTTP transport สามารถดู recent-call viewer ที่ทำ redaction แล้วได้ที่ `http://127.0.0.1:8787/ui` หากเปิด `MCP_HTTP_TOKEN` endpoint ของ UI จะต้องใช้ Bearer authorization header เดียวกัน
 

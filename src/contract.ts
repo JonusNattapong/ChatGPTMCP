@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ToolSpec } from './tools.js';
 
-export const CONTRACT_VERSION = 2;
+export const CONTRACT_VERSION = 3;
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);

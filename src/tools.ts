@@ -43,6 +43,7 @@ import {
 } from './git-tools.js';
 import { diskInfo, environmentInfo, listPorts, listProcesses, networkInfo, systemInfo } from './system-tools.js';
 import { gitCommitVerified, verifyChanges, type VerificationProfile } from './verification.js';
+import { createMachineRoutingSpecs } from './machine-router.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -51,6 +52,7 @@ export interface ToolContext extends MachineAccess {
   policyName?: string;
   approvalMode?: string;
   audit?: AuditLogger;
+  machinesFile?: string;
 }
 
 export interface ToolSpec {
@@ -950,6 +952,11 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       handler: async (args) => gitPush({ ...access, path: optionalString(args, 'path'), remote: optionalString(args, 'remote'), branch: optionalString(args, 'branch'), setUpstream: optionalBoolean(args, 'set_upstream') }),
     },
   ];
+
+  specs.push(...createMachineRoutingSpecs({
+    machinesFile: context.machinesFile,
+    timeoutMs: context.maxTimeoutMs,
+  }));
 
   return specs;
 }

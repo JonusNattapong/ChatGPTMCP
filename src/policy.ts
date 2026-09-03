@@ -80,6 +80,7 @@ const BUILTIN: Record<PolicyProfileName, PolicyConfig> = {
         'git_commit_verified',
         'git_checkout',
         'git_push',
+        'machine_call',
         'save_image_from_url',
       ],
     },

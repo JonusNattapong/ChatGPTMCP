@@ -79,7 +79,8 @@
           <article class="card"><strong>Git (9)</strong> <code>git_status</code>, <code>git_diff</code>, <code>git_log</code>, <code>git_show</code>, <code>git_branch</code>, <code>git_add</code>, <code>git_commit</code>, <code>git_checkout</code>, <code>git_push</code></article>
           <article class="card"><strong>System (6)</strong> <code>system_info</code>, <code>list_processes</code>, <code>list_ports</code>, <code>environment_info</code>, <code>disk_info</code>, <code>network_info</code></article>
           <article class="card"><strong>Image + Audit (3)</strong> <code>save_image_from_url</code>, <code>audit_recent</code>, <code>audit_search</code></article>
-          <article class="card"><strong>Verified workflow (2)</strong> <code>verify_changes</code> รัน project gate แบบ <code>fast | normal | strict</code>; <code>git_commit_verified</code> verify ก่อน, ปฏิเสธ staging area ที่มีของเดิม, stage เฉพาะ path ที่ระบุ และ commit เฉพาะ local โดยแยก push ไว้เป็น approval/network boundary — รวม 37 tools</article>
+          <article class="card"><strong>Verified workflow (2)</strong> <code>verify_changes</code> รัน project gate แบบ <code>fast | normal | strict</code>; <code>git_commit_verified</code> verify ก่อน, ปฏิเสธ staging area ที่มีของเดิม, stage เฉพาะ path ที่ระบุ และ commit เฉพาะ local โดยแยก push ไว้เป็น approval/network boundary</article>
+          <article class="card"><strong>Multi-machine (4)</strong> <code>machines_list</code>, <code>machine_probe</code>, <code>machine_tools</code>, <code>machine_call</code> route ได้เฉพาะ node ที่อยู่ใน allowlist — รวม 41 tools</article>
         </div>
         <h3>Concurrency guard</h3>
         <p>การอ่านไฟล์จะคืนค่า SHA-256 digest กลับมา ตอนเขียนสามารถส่ง <code>expected_sha256</code> เพื่อเปลี่ยน stale update ให้กลายเป็น <code>PRECONDITION_FAILED</code> แทนการ overwrite การแก้ไขใหม่กว่าแบบเงียบ ๆ</p>
@@ -121,20 +122,21 @@ stop_process(pid) -> stops the process tree</code></pre>
         <pre><code>chatgpt-local setup       # สร้าง local config + ตรวจ preflight
 chatgpt-local up          # build + start supervised tunnel
 chatgpt-local status      # tunnel + supervisor generation/restarts
-chatgpt-local restart     # detached refresh ผ่าน refresh-tunnel
+chatgpt-local restart     # build ใหม่ แล้ว stop/start tunnel
 chatgpt-local down        # stop-tunnel
 chatgpt-local doctor      # dependencies + workspace permissions
-chatgpt-local check       # effective runtime + v2 contract fingerprint
+chatgpt-local check       # effective runtime + v3 contract fingerprint
 chatgpt-local config show
 chatgpt-local version</code></pre>
-        <p>Runtime config แบบ local อยู่ใน <code>.chatgpt-machine/config.json</code> ซึ่งถูก Git ignore คำสั่ง <code>chatgpt-local use &lt;path&gt;</code> จะ persist active workspace ส่วน status จะแสดง live worker root และบอกชัดเมื่อจำเป็นต้อง restart; contract v2 fingerprint คำนวณจากชื่อ, schema และ annotations ของ public tools ทั้ง 37 ตัว เพื่อให้ตรวจจับ MCP-surface drift ก่อน deploy ได้</p>
+        <p>Runtime config แบบ local อยู่ใน <code>.chatgpt-machine/config.json</code> ซึ่งถูก Git ignore คำสั่ง <code>chatgpt-local use &lt;path&gt;</code> จะ persist active workspace ส่วน status จะแสดง live worker root และบอกชัดเมื่อจำเป็นต้อง restart; contract v3 fingerprint คำนวณจากชื่อ, schema และ annotations ของ public tools ทั้ง 41 ตัว เพื่อให้ตรวจจับ MCP-surface drift ก่อน deploy ได้</p>
         <p>ขณะ tunnel ที่ผู้ใช้เริ่มไว้ยังทำงาน <code>watch-tunnel.ps1</code> หรือ <code>watch-tunnel.sh</code> จะตรวจ managed runtime ทุก 15 วินาที หาก unhealthy ติดต่อกัน 2 รอบจะ reconnect tunnel และเก็บ diagnostics แบบจำกัดขนาดที่ <code>.tunnel/watch-tunnel.log</code>; <code>chatgpt-local down</code> จะหยุด watchdog ก่อนเสมอ จึงไม่ย้อนการปิดที่ผู้ใช้สั่งเอง.</p>
         <p>Scripts ระดับล่างยังใช้สำหรับ debugging ได้ (<code>.ps1</code> บน Windows, <code>.sh</code> บน macOS/Ubuntu/WSL):</p>
         <pre><code>.\scripts\start-tunnel.ps1     # หรือ ./scripts/start-tunnel.sh
 .\scripts\status-tunnel.ps1    # หรือ ./scripts/status-tunnel.sh
-.\scripts\stop-tunnel.ps1      # หรือ ./scripts/stop-tunnel.sh
-.\scripts\refresh-tunnel.ps1   # หรือ ./scripts/refresh-tunnel.sh  (detached, log ที่ .tunnel/refresh-tunnel.log)</code></pre>
-        <p>บน Windows runtime key ควรอยู่ใน <code>.tunnel\control-plane-api-key.dpapi</code> ซึ่งถูก ignore จาก Git launch scripts จะ decrypt key เฉพาะให้ process ของ tunnel-client แล้วลบ plaintext environment variable ใน <code>finally</code> ทั้ง <code>start-tunnel</code> และ <code>refresh-tunnel</code></p>
+.\scripts\stop-tunnel.ps1      # หรือ ./scripts/stop-tunnel.sh</code></pre>
+        <p>บน Windows runtime key ควรอยู่ใน <code>.tunnel\control-plane-api-key.dpapi</code> ซึ่งถูก ignore จาก Git โดย start script จะ decrypt key เฉพาะให้ process ของ tunnel-client แล้วลบ plaintext environment variable ใน <code>finally</code></p>
+        <h3>Multi-machine gateway</h3>
+        <p>Gateway สามารถ route ไปยัง Streamable HTTP node หลายเครื่องที่ register แบบ allowlist ใน <code>.chatgpt-machine/machines.json</code> ซึ่ง Git ignore ไว้ ใช้ <code>chatgpt-local machine add|list|remove</code> และเลือก node ด้วย id, name, hostname, alias, IP หรือ host:port เท่านั้น tool caller ไม่สามารถส่ง URL อะไรก็ได้ให้ gateway ยิงออกไปเอง Public endpoint ต้องเป็น HTTPS ส่วน private LAN/VPN/Tailscale ใช้ HTTP พร้อม bearer token ได้</p>
         <h3>macOS, Ubuntu และ WSL</h3>
         <p>MCP server รองรับ macOS, Ubuntu และ Ubuntu WSL โดยใช้ Bash เป็น default shell และใช้ POSIX process termination ใช้ <code>start-tunnel.sh</code>, <code>status-tunnel.sh</code> และ <code>stop-tunnel.sh</code> บน macOS จะเก็บ runtime key ใน Keychain ส่วน Linux/WSL รับ <code>CONTROL_PLANE_API_KEY</code> หรือ local key file permission 600 ได้ WSL ควบคุม Linux environment ของตัวเอง ไม่ใช่ native Windows process ทั้งเครื่อง</p>
       </section>
@@ -148,10 +150,11 @@ npm test</code></pre>
         <table><thead><tr><th>ไฟล์</th><th>หน้าที่</th></tr></thead><tbody>
           <tr><td><code>src/supervisor.ts</code></td><td>stdio proxy ฝั่ง tunnel, hard request deadline, worker restart/reinitialize, generation และ persisted supervisor state</td></tr>
           <tr><td><code>src/index.ts</code></td><td>MCP worker, CLI parsing (--root, --dangerously-open-machine, --http, --check, --doctor, --dry-run), stdio/HTTP transports, response envelope และ HTTP health/readiness</td></tr>
-          <tr><td><code>src/cli.ts</code></td><td>Operator CLI <code>chatgpt-local</code> (setup/up/down/restart/status/doctor/check/config/version), preflight และ script selection ตาม OS</td></tr>
+          <tr><td><code>src/cli.ts</code></td><td>Operator CLI <code>chatgpt-local</code> (setup/up/down/restart/status/machine/doctor/check/config/version), preflight และ script selection ตาม OS</td></tr>
           <tr><td><code>src/config.ts</code></td><td>Local runtime configuration แบบ Git-ignored และ mapping ไป tunnel environment</td></tr>
-          <tr><td><code>src/contract.ts</code></td><td>Versioned public contract v2 ของ 37 tools และ deterministic SHA-256 fingerprint</td></tr>
-          <tr><td><code>src/tools.ts</code></td><td>Tool registry (37 tools), schemas, handlers, compact/expanded machine_status และ contract metadata</td></tr>
+          <tr><td><code>src/contract.ts</code></td><td>Versioned public contract v3 ของ 41 tools และ deterministic SHA-256 fingerprint</td></tr>
+          <tr><td><code>src/tools.ts</code></td><td>Tool registry (41 tools), schemas, handlers, compact/expanded machine_status และ contract metadata</td></tr>
+          <tr><td><code>src/machine-router.ts</code></td><td>Allowlisted remote-node registry, selector resolution, health probe, MCP tool discovery และ routed tool call</td></tr>
           <tr><td><code>src/verification.ts</code></td><td>Project verification แบบ fast/normal/strict และ verified local commit transaction</td></tr>
           <tr><td><code>src/file-tools.ts</code></td><td>Text, directory, image และ code-search operations</td></tr>
           <tr><td><code>src/shell-tools.ts</code></td><td>Path policy, shell execution (caps, timeout, encoding), apply_patch รูปแบบ Codex</td></tr>
