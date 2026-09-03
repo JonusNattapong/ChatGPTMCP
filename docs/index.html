@@ -72,14 +72,14 @@
         <div class="eyebrow">02 / Tool surface</div>
         <h2>Purpose-built tools instead of ambiguous shell prompts</h2>
         <div class="grid">
-          <article class="card"><strong>Inspect (7)</strong> <code>machine_status</code>, <code>read_file</code>, <code>list_directory</code>, <code>find_files</code>, <code>file_info</code>, <code>image_info</code>, <code>search_code</code></article>
+          <article class="card"><strong>Inspect (9)</strong> <code>machine_status</code>, <code>read_file</code>, <code>read_files</code>, <code>project_snapshot</code>, <code>list_directory</code>, <code>find_files</code>, <code>file_info</code>, <code>image_info</code>, <code>search_code</code></article>
           <article class="card"><strong>Edit (4)</strong> <code>write_file</code>, <code>edit_file</code>, <code>update_file</code>, <code>apply_patch</code></article>
           <article class="card"><strong>Run (6)</strong> <code>shell_command</code>, <code>start_process</code>, <code>process_status</code>, <code>read_process_output</code>, <code>stop_process</code>, <code>process_write</code>. A timed-out shell call can promote itself into the managed registry instead of losing the job.</article>
           <article class="card"><strong>Git (9)</strong> <code>git_status</code>, <code>git_diff</code>, <code>git_log</code>, <code>git_show</code>, <code>git_branch</code>, <code>git_add</code>, <code>git_commit</code>, <code>git_checkout</code>, <code>git_push</code></article>
           <article class="card"><strong>System (6)</strong> <code>system_info</code>, <code>list_processes</code>, <code>list_ports</code>, <code>environment_info</code>, <code>disk_info</code>, <code>network_info</code></article>
           <article class="card"><strong>Image + Audit (3)</strong> <code>save_image_from_url</code>, <code>audit_recent</code>, <code>audit_search</code></article>
           <article class="card"><strong>Verified workflow (2)</strong> <code>verify_changes</code> runs <code>fast | normal | strict</code> project gates; <code>git_commit_verified</code> verifies first, refuses an existing staging area, stages only explicit paths, and commits locally. Push remains a separate approval/network boundary.</article>
-          <article class="card"><strong>Multi-machine (4)</strong> <code>machines_list</code>, <code>machine_probe</code>, <code>machine_tools</code>, <code>machine_call</code> route only to allowlisted nodes. — 41 tools total.</article>
+          <article class="card"><strong>Multi-machine (5)</strong> <code>machines_list</code>, <code>machine_probe</code>, <code>machine_tools</code>, <code>machine_read</code>, <code>machine_call</code> route only to allowlisted nodes. <code>machine_read</code> proves the remote tool is explicitly read-only before execution. — 44 tools total.</article>
         </div>
         <h3>Concurrency guard</h3>
         <p>File reads return a SHA-256 digest. Writes can pass <code>expected_sha256</code>, converting a stale update into <code>PRECONDITION_FAILED</code> instead of silently overwriting a newer edit.</p>
@@ -124,10 +124,10 @@ chatgpt-local status      # tunnel + supervisor generation/restarts
 chatgpt-local restart     # rebuild, stop, then start the tunnel
 chatgpt-local down        # stop-tunnel
 chatgpt-local doctor      # dependencies + workspace permissions
-chatgpt-local check       # effective runtime + v3 contract fingerprint
+chatgpt-local check       # effective runtime + v4 contract fingerprint
 chatgpt-local config show
 chatgpt-local version</code></pre>
-        <p>Local runtime settings live in Git-ignored <code>.chatgpt-machine/config.json</code>. <code>chatgpt-local use &lt;path&gt;</code> persists the active workspace; status reports the live worker root and explicitly marks when a restart is required. The v3 contract fingerprint is derived from the 41 public tool names, schemas, and annotations, making MCP-surface drift visible during deployment checks.</p>
+        <p>Local runtime settings live in Git-ignored <code>.chatgpt-machine/config.json</code>. <code>chatgpt-local use &lt;path&gt;</code> persists the active workspace; status reports <code>runtimeRoot</code>, <code>configuredRoot</code>, and <code>configApplied</code> so restart requirements come from live worker state. The v4 contract fingerprint is derived from the 44 public tool names, schemas, and annotations, making MCP-surface drift visible during deployment checks.</p>
         <p>While a tunnel has been intentionally started, <code>watch-tunnel.ps1</code> or <code>watch-tunnel.sh</code> checks its managed runtime every 15 seconds. Two consecutive unhealthy checks reconnect the tunnel; diagnostics stay bounded in <code>.tunnel/watch-tunnel.log</code>. <code>chatgpt-local down</code> stops that watchdog first, so it never reverses an explicit shutdown.</p>
         <p>Underlying scripts remain available for debugging (<code>.ps1</code> on Windows, <code>.sh</code> on macOS/Ubuntu/WSL):</p>
         <pre><code>.\scripts\start-tunnel.ps1     # or ./scripts/start-tunnel.sh
@@ -135,7 +135,7 @@ chatgpt-local version</code></pre>
 .\scripts\stop-tunnel.ps1      # or ./scripts/stop-tunnel.sh</code></pre>
         <p>On Windows, the runtime key belongs in <code>.tunnel\control-plane-api-key.dpapi</code>, which is ignored by Git. The start script decrypts it only for the tunnel-client process and removes the plaintext environment variable in <code>finally</code>.</p>
         <h3>Multi-machine gateway</h3>
-        <p>The gateway can route to multiple allowlisted Streamable HTTP nodes registered in Git-ignored <code>.chatgpt-machine/machines.json</code>. Use <code>chatgpt-local machine add|list|remove</code>. Selectors can be an id, name, hostname, alias, IP address, or host:port; arbitrary URLs supplied by tool callers are not allowed. Public endpoints require HTTPS, while private LAN/VPN/Tailscale addresses may use HTTP with a bearer token.</p>
+        <p>The gateway can route to multiple allowlisted Streamable HTTP nodes registered in Git-ignored <code>.chatgpt-machine/machines.json</code>. Use <code>chatgpt-local machine add|list|remove</code>. Selectors can be an id, name, hostname, alias, IP address, or host:port; arbitrary URLs supplied by tool callers are not allowed. Public endpoints require HTTPS, while private LAN/VPN/Tailscale addresses may use HTTP with a bearer token. <code>machine_tools</code> caches capabilities for 60 seconds with a fingerprint; <code>machine_read</code> requires <code>readOnlyHint=true</code>, while <code>machine_call</code> remains the approval-gated mutation path.</p>
         <h3>macOS, Ubuntu, and WSL</h3>
         <p>The MCP server supports macOS, Ubuntu, and Ubuntu WSL with Bash as the default shell and POSIX process termination. Use <code>start-tunnel.sh</code>, <code>status-tunnel.sh</code>, and <code>stop-tunnel.sh</code>. macOS stores the runtime key in Keychain; Linux/WSL accepts <code>CONTROL_PLANE_API_KEY</code> or a local mode-600 key file. WSL controls its Linux environment, not arbitrary native Windows processes.</p>
       </section>
@@ -151,9 +151,9 @@ npm test</code></pre>
           <tr><td><code>src/index.ts</code></td><td>MCP worker, CLI parsing (--root, --dangerously-open-machine, --http, --check, --doctor, --dry-run), stdio/HTTP transports, response envelope and HTTP health/readiness.</td></tr>
           <tr><td><code>src/cli.ts</code></td><td>Operator CLI <code>chatgpt-local</code> (setup/up/down/restart/status/machine/doctor/check/config/version), preflight and script selection per OS.</td></tr>
           <tr><td><code>src/config.ts</code></td><td>Git-ignored local runtime configuration and tunnel environment mapping.</td></tr>
-          <tr><td><code>src/contract.ts</code></td><td>Versioned 41-tool public contract manifest (v3) and deterministic SHA-256 fingerprint.</td></tr>
-          <tr><td><code>src/tools.ts</code></td><td>Tool registry (41 tools), schemas, handlers, compact/expanded machine status, and contract metadata.</td></tr>
-          <tr><td><code>src/machine-router.ts</code></td><td>Allowlisted remote-node registry, selector resolution, health probing, MCP tool discovery, and routed tool calls.</td></tr>
+          <tr><td><code>src/contract.ts</code></td><td>Versioned 44-tool public contract manifest (v4) and deterministic SHA-256 fingerprint.</td></tr>
+          <tr><td><code>src/tools.ts</code></td><td>Tool registry (44 tools), schemas, handlers, batch/project reads, compact/expanded machine status, and contract metadata.</td></tr>
+          <tr><td><code>src/machine-router.ts</code></td><td>Allowlisted remote-node registry, selector resolution, health probing, capability cache/fingerprint, proven read-only routing, and high-authority routed calls.</td></tr>
           <tr><td><code>src/verification.ts</code></td><td>Detected fast/normal/strict project verification and verified local commit transaction.</td></tr>
           <tr><td><code>src/file-tools.ts</code></td><td>Text, directory, image, and code-search operations.</td></tr>
           <tr><td><code>src/shell-tools.ts</code></td><td>Path policy, shell execution (caps, timeout, encoding), apply_patch (Codex format).</td></tr>

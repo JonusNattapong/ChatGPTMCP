@@ -6,45 +6,52 @@ Repository instructions for coding agents working in `ChatGPTMCP`.
 
 `chatgpt-machine-mcp` is a small local MCP server that intentionally exposes high-authority machine operations.
 
-Keep the implementation narrow. The public contract is thirty-seven tools:
+Keep the implementation narrow. The public contract is forty-four tools:
 
 1. `machine_status`
-2. `read_file`
-3. `list_directory`
-4. `find_files`
-5. `file_info`
-6. `image_info`
-7. `save_image_from_url`
-8. `search_code`
-9. `write_file`
-10. `edit_file`
-11. `update_file`
-12. `shell_command`
-13. `start_process`
-14. `process_status`
-15. `read_process_output`
-16. `stop_process`
-17. `process_write`
-18. `git_status`
-19. `git_diff`
-20. `git_log`
-21. `git_show`
-22. `git_branch`
-23. `git_add`
-24. `git_commit`
-25. `git_checkout`
-26. `git_push`
-27. `system_info`
-28. `list_processes`
-29. `list_ports`
-30. `environment_info`
-31. `disk_info`
-32. `network_info`
-33. `audit_recent`
-34. `audit_search`
-35. `apply_patch`
-36. `verify_changes`
+2. `system_info`
+3. `list_processes`
+4. `list_ports`
+5. `environment_info`
+6. `disk_info`
+7. `network_info`
+8. `audit_recent`
+9. `audit_search`
+10. `read_file`
+11. `read_files`
+12. `project_snapshot`
+13. `list_directory`
+14. `find_files`
+15. `file_info`
+16. `image_info`
+17. `save_image_from_url`
+18. `search_code`
+19. `write_file`
+20. `edit_file`
+21. `update_file`
+22. `shell_command`
+23. `start_process`
+24. `process_status`
+25. `read_process_output`
+26. `process_write`
+27. `stop_process`
+28. `apply_patch`
+29. `verify_changes`
+30. `git_status`
+31. `git_diff`
+32. `git_log`
+33. `git_show`
+34. `git_branch`
+35. `git_add`
+36. `git_commit`
 37. `git_commit_verified`
+38. `git_checkout`
+39. `git_push`
+40. `machines_list`
+41. `machine_probe`
+42. `machine_tools`
+43. `machine_read`
+44. `machine_call`
 
 Do not introduce orchestration, planning, memory, agent delegation, or a generic task framework into this repository unless a concrete requirement demands it. This project is infrastructure plumbing, not an agent harness.
 
@@ -52,7 +59,7 @@ Do not introduce orchestration, planning, memory, agent delegation, or a generic
 
 Treat these files as authoritative, in this order:
 
-1. `src/tools.ts` — the 41-tool registry: schema, description, argument validation, and handler for every tool.
+1. `src/tools.ts` — the 44-tool registry: schema, description, argument validation, and handler for every tool.
 2. `src/contract.ts` — the versioned public tool contract and deterministic contract fingerprint.
 3. `src/supervisor.ts` — the tunnel-facing stdio worker boundary, hard deadline, restart/reinitialize logic, and supervisor state.
 4. `src/index.ts` — MCP worker, transports, HTTP authentication/readiness, policy gates, and the shared result envelope.
@@ -95,7 +102,7 @@ Do not restart the tunnel merely for documentation-only changes.
 The public MCP surface is deliberately small.
 
 - `machine_status` must remain read-only.
-- `read_file`, `list_directory`, `find_files`, `file_info`, `image_info`, and `search_code` are read-only.
+- `read_file`, `read_files`, `project_snapshot`, `list_directory`, `find_files`, `file_info`, `image_info`, and `search_code` are read-only.
 - `save_image_from_url` is destructive/open-world because it performs network I/O and writes a file.
 - `start_process`, `process_write`, and `stop_process` are destructive; `process_status` and `read_process_output` are read-only.
 - `git_status`, `git_diff`, `git_log`, `git_show`, and `git_branch` are read-only; Git mutations must remain policy-aware and approval-gated where configured.
@@ -105,6 +112,9 @@ The public MCP surface is deliberately small.
 - `shell_command.on_timeout="background"` must preserve the process in the managed registry and return offsets usable by `read_process_output`.
 - `idempotency_key` is transport metadata accepted by every tool; identical retries return the cached response and conflicting reuse fails closed.
 - `apply_patch` is destructive but not open-world by annotation.
+- `machines_list` is local/read-only; `machine_probe`, `machine_tools`, and `machine_read` are read-only/open-world because they contact allowlisted remote nodes.
+- `machine_read` must verify the remote tool's current cached/discovered `readOnlyHint=true` annotation before execution and fail closed for missing or mutating annotations.
+- `machine_call` is destructive/open-world and remains approval-gated by the developer policy.
 - changing tool names or argument schemas is a breaking integration change.
 
 Do not add a tool that simply wraps a shell command unless it creates a meaningful security, reliability, or schema boundary.
@@ -124,6 +134,8 @@ Do not weaken this mode for convenience.
 
 - text file operations must reuse `resolveMachinePath` and enforce the workspace boundary;
 - `read_file` output must remain bounded and reject binary inputs;
+- `read_files` must cap both file count and combined returned content bytes; one per-file read failure must not discard successful sibling reads;
+- `project_snapshot` must remain bounded and read-only; instruction-file reads must reuse the normal path policy.
 - `list_directory` and `find_files` must keep entry, depth, and recursion limits, and must not follow symlinks;
 - `file_info` must report hashes only for regular files;
 - `image_info` and `save_image_from_url` must validate PNG/JPEG/WebP signatures;
@@ -165,6 +177,7 @@ Preserve these guards unless there is a measured reason to change them:
 - combined output cap: 4 MiB;
 - explicit shell allow-list: `auto`, `powershell`, `cmd`, `bash`;
 - `cmd` only on Windows.
+- synchronous PowerShell execution must convert PowerShell errors into a non-zero shell result instead of reporting false success; the internal detection marker must not cross the MCP boundary.
 
 Changes to process termination, timeout handling, encoding, or output limits should include focused tests.
 
@@ -234,7 +247,7 @@ Do not commit decrypted runtime keys.
 
 The runtime key file under `.tunnel/` is machine-local and Git-ignored. `start-tunnel.ps1` must continue to remove `CONTROL_PLANE_API_KEY` from the process environment in `finally`.
 
-Multi-machine routing is allowlist-based. The gateway reads `.chatgpt-machine/machines.json`; tool callers may select only a registered machine by id/name/hostname/alias/IP/host:port. Never turn `machine_call` into an arbitrary URL fetch. Registry entries may contain only environment-variable names for tokens, never token values.
+Multi-machine routing is allowlist-based. The gateway reads `.chatgpt-machine/machines.json`; tool callers may select only a registered machine by id/name/hostname/alias/IP/host:port. Never turn `machine_call` or `machine_read` into an arbitrary URL fetch. Registry entries may contain only environment-variable names for tokens, never token values. Remote tool capabilities are cached for a bounded TTL with a fingerprint; explicit refresh replaces the cache when the fingerprint changes. Audit records for routed calls promote the machine selector and remote tool name into top-level fields.
 
 Avoid changing tunnel IDs, organization IDs, aliases, or profiles unless the task explicitly concerns tunnel provisioning.
 

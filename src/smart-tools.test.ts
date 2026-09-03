@@ -256,7 +256,7 @@ test('the tool registry validates arguments and reports its own surface', async 
   await withRoot('machine-mcp-registry-', async (root) => {
     const specs = createToolSpecs({ root, unrestricted: false, maxTimeoutMs: 60_000 });
     const byName = new Map(specs.map((spec) => [spec.name, spec]));
-    assert.equal(specs.length, 41);
+    assert.equal(specs.length, 44);
 
     await assert.rejects(
       byName.get('read_file')!.handler({}),

@@ -7,6 +7,14 @@ import test from 'node:test';
 import { createMachineRoutingSpecs, normalizeMachineEndpoint, resolveMachine, writeMachineRegistry } from './machine-router.js';
 
 async function fakeNode() {
+  let toolsListCalls = 0;
+  let capabilityVersion = 1;
+  const tools = () => [
+    { name: 'machine_status', description: 'status', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } },
+    { name: 'write_file', description: 'write', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false } },
+    ...(capabilityVersion >= 2 ? [{ name: 'system_info', description: 'system', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } }] : []),
+  ];
+
   const server = createServer(async (req, res) => {
     if (req.url === '/healthz' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -21,13 +29,24 @@ async function fakeNode() {
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const message = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { id: unknown; method: string; params?: { name?: string } };
     if (message.method === 'tools/list') {
+      toolsListCalls++;
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'machine_status', description: 'status', annotations: { readOnlyHint: true } }] } }));
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: tools() } }));
       return;
     }
     if (message.method === 'tools/call' && message.params?.name === 'machine_status') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, hostname: 'NODE-A' }) }] } }));
+      return;
+    }
+    if (message.method === 'tools/call' && message.params?.name === 'system_info') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, platform: 'test' }) }] } }));
+      return;
+    }
+    if (message.method === 'tools/call' && message.params?.name === 'write_file') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: JSON.stringify({ ok: true, written: true }) }] } }));
       return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -39,7 +58,12 @@ async function fakeNode() {
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('missing server address');
-  return { port: address.port, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  return {
+    port: address.port,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    toolsListCalls: () => toolsListCalls,
+    setCapabilityVersion: (version: number) => { capabilityVersion = version; },
+  };
 }
 
 test('machine endpoints allow private HTTP but require HTTPS for public hosts', () => {
@@ -63,7 +87,7 @@ test('machine registry resolves a node by id, alias, hostname, IP, and host:port
   }
 });
 
-test('routing tools probe, discover, and call a registered node by IP selector', async () => {
+test('remote routing caches capabilities, proves read-only calls, and refreshes changed fingerprints', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'machine-router-call-'));
   const file = path.join(root, 'machines.json');
   const node = await fakeNode();
@@ -78,13 +102,38 @@ test('routing tools probe, discover, and call a registered node by IP selector',
     const probed = await byName.get('machine_probe')!.handler({ machine: '127.0.0.1' }) as { online: boolean };
     assert.equal(probed.online, true);
 
-    const tools = await byName.get('machine_tools')!.handler({ machine: '127.0.0.1' }) as { tools: Array<{ name: string }> };
-    assert.deepEqual(tools.tools.map((tool) => tool.name), ['machine_status']);
+    const firstTools = await byName.get('machine_tools')!.handler({ machine: '127.0.0.1' }) as { tools: Array<{ name: string }>; cache: { hit: boolean; fingerprint: string; changed: boolean } };
+    assert.deepEqual(firstTools.tools.map((tool) => tool.name), ['machine_status', 'write_file']);
+    assert.equal(firstTools.cache.hit, false);
+    assert.equal(node.toolsListCalls(), 1);
 
-    const called = await byName.get('machine_call')!.handler({ machine: '127.0.0.1', tool: 'machine_status', arguments: {} }) as { result: { hostname: string } };
-    assert.equal(called.result.hostname, 'NODE-A');
+    const secondTools = await byName.get('machine_tools')!.handler({ machine: 'node-a' }) as { cache: { hit: boolean } };
+    assert.equal(secondTools.cache.hit, true);
+    assert.equal(node.toolsListCalls(), 1);
 
-    await assert.rejects(() => byName.get('machine_call')!.handler({ machine: 'node-a', tool: 'machine_call' }), /cannot be called through machine_call/);
+    const read = await byName.get('machine_read')!.handler({ machine: '127.0.0.1', tool: 'machine_status', arguments: {} }) as { result: { hostname: string } };
+    assert.equal(read.result.hostname, 'NODE-A');
+    assert.equal(node.toolsListCalls(), 1, 'machine_read should reuse the cached capability proof');
+
+    await assert.rejects(
+      () => byName.get('machine_read')!.handler({ machine: 'node-a', tool: 'write_file', arguments: { path: 'x' } }),
+      (error: unknown) => (error as { code?: string }).code === 'POLICY_DENIED',
+    );
+
+    const called = await byName.get('machine_call')!.handler({ machine: '127.0.0.1', tool: 'write_file', arguments: { path: 'x' } }) as { result: { written: boolean } };
+    assert.equal(called.result.written, true);
+
+    node.setCapabilityVersion(2);
+    const refreshed = await byName.get('machine_tools')!.handler({ machine: 'node-a', refresh: true }) as { tools: Array<{ name: string }>; cache: { changed: boolean; fingerprint: string } };
+    assert.equal(node.toolsListCalls(), 2);
+    assert.equal(refreshed.cache.changed, true);
+    assert.notEqual(refreshed.cache.fingerprint, firstTools.cache.fingerprint);
+    assert.deepEqual(refreshed.tools.map((tool) => tool.name), ['machine_status', 'write_file', 'system_info']);
+
+    const system = await byName.get('machine_read')!.handler({ machine: 'node-a', tool: 'system_info' }) as { result: { platform: string } };
+    assert.equal(system.result.platform, 'test');
+
+    await assert.rejects(() => byName.get('machine_call')!.handler({ machine: 'node-a', tool: 'machine_call' }), /cannot be called through another routing tool/);
   } finally {
     await node.close();
     await rm(root, { recursive: true, force: true });

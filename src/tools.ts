@@ -7,7 +7,7 @@ import type { Tool } from '@modelcontextprotocol/server';
 import { AuditLogger, defaultAuditPath } from './audit.js';
 import { CONTRACT_VERSION, createContractManifest } from './contract.js';
 import { APP_VERSION } from './version.js';
-import { ToolError } from './errors.js';
+import { describeError, ToolError } from './errors.js';
 import {
   editMachineFile,
   editMachineFileTransaction,
@@ -135,6 +135,22 @@ function optionalStringRecord(args: Record<string, unknown>, name: string): Reco
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+function requireObjectArray(args: Record<string, unknown>, name: string, maxItems: number): Record<string, unknown>[] {
+  const value = args[name];
+  if (!Array.isArray(value) || value.length === 0 || value.length > maxItems || value.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry))) {
+    throw new ToolError('INVALID_ARGUMENT', `"${name}" must be an array of 1-${maxItems} objects.`);
+  }
+  return value as Record<string, unknown>[];
+}
+
+function sameResolvedPath(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    const resolved = path.resolve(value);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(left) === normalize(right);
+}
+
 function optionalShell(args: Record<string, unknown>): ShellKind {
   const value = args.shell;
   if (value === undefined || value === null) return 'auto';
@@ -227,12 +243,9 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         try { statusDetail = await gitStatus(access); } catch { /* workspace may not be a git repo */ }
         const gitLabel = statusDetail ? (statusDetail.clean ? 'clean' : `${statusDetail.files.length} changes (${statusDetail.branch})`) : 'non-git';
         const health = supervisorState?.health ?? (process.env.MCP_SUPERVISED === '1' ? 'healthy' : 'unsupervised');
-        const restartRequired = Boolean(
-          supervisorState &&
-          supervisorState.health !== 'stopped' &&
-          configuredWorkspace &&
-          path.resolve(context.root) !== configuredWorkspace,
-        );
+        const runtimeRoot = supervisorState?.workerRoot ? path.resolve(supervisorState.workerRoot) : path.resolve(context.root);
+        const configApplied = configuredWorkspace === undefined ? undefined : sameResolvedPath(runtimeRoot, configuredWorkspace);
+        const restartRequired = Boolean(supervisorState && supervisorState.health !== 'stopped' && configApplied === false);
 
         const project = (detailed || include.includes('project')) ? await readFile(path.join(context.root, 'package.json'), 'utf8').then((text) => {
           const pkg = JSON.parse(text) as { name?: string; scripts?: Record<string, string> };
@@ -242,10 +255,12 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         const base = {
           status: health,
           workspace: {
-            name: path.basename(context.root),
-            root: context.root,
+            name: path.basename(runtimeRoot),
+            root: runtimeRoot,
+            runtimeRoot,
+            ...(configuredWorkspace ? { configuredRoot: configuredWorkspace } : {}),
+            ...(configApplied !== undefined ? { configApplied } : {}),
             git: gitLabel,
-            ...(restartRequired && configuredWorkspace ? { configuredRoot: configuredWorkspace } : {}),
           },
           processes: { running: runningProcesses.length, total: allProcesses.length },
           diagnostics: {
@@ -254,6 +269,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
             circuitRetryAt: supervisorState?.circuitRetryAt ?? null,
             restarts: supervisorState?.restarts ?? 0,
             lastRestartReason: supervisorState?.lastRestartReason ?? null,
+            configApplied: configApplied ?? null,
             restartRequired,
           },
         };
@@ -409,6 +425,133 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         maxBytes: optionalInteger(args, 'max_bytes'),
         lineNumbers: optionalBoolean(args, 'line_numbers'),
       }),
+    },
+    {
+      name: 'read_files',
+      description: 'Read multiple UTF-8 text files in one bounded call. Each file keeps its own line/byte limits and SHA-256; failures are reported per file so one missing file does not discard the other reads.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          files: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 50,
+            items: {
+              type: 'object',
+              properties: {
+                path: PATH_PROPERTY,
+                start_line: { type: 'integer', minimum: 1 },
+                max_lines: { type: 'integer', minimum: 1, maximum: 10000 },
+                max_bytes: { type: 'integer', minimum: 1, maximum: 1048576 },
+                line_numbers: { type: 'boolean' },
+              },
+              required: ['path'],
+            },
+          },
+          max_total_bytes: { type: 'integer', minimum: 1024, maximum: 4194304, description: 'Combined returned content budget; defaults to 1 MiB.' },
+        },
+        required: ['files'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => {
+        const requests = requireObjectArray(args, 'files', 50);
+        const maxTotalBytes = optionalInteger(args, 'max_total_bytes') ?? 1024 * 1024;
+        if (maxTotalBytes < 1024 || maxTotalBytes > 4 * 1024 * 1024) throw new ToolError('INVALID_ARGUMENT', '"max_total_bytes" must be between 1024 and 4194304.');
+        let remaining = maxTotalBytes;
+        const files: unknown[] = [];
+        let budgetExhausted = false;
+        for (let index = 0; index < requests.length; index++) {
+          const request = requests[index]!;
+          const requestedPath = requireString(request, 'path');
+          if (remaining <= 0) {
+            budgetExhausted = true;
+            files.push({ path: requestedPath, skipped: true, error: { code: 'TOO_LARGE', message: 'Combined read_files byte budget was exhausted before this file.' } });
+            continue;
+          }
+          try {
+            const perFileMax = optionalInteger(request, 'max_bytes') ?? 1024 * 1024;
+            const result = await readMachineFile({
+              ...access,
+              filePath: requestedPath,
+              startLine: optionalInteger(request, 'start_line'),
+              maxLines: optionalInteger(request, 'max_lines'),
+              maxBytes: Math.min(perFileMax, remaining),
+              lineNumbers: optionalBoolean(request, 'line_numbers'),
+            });
+            remaining -= Buffer.byteLength(result.content, 'utf8');
+            files.push(result);
+          } catch (error: unknown) {
+            files.push({ path: requestedPath, error: describeError(error) });
+          }
+        }
+        return { files, totalBytes: maxTotalBytes - remaining, maxTotalBytes, budgetExhausted };
+      },
+    },
+    {
+      name: 'project_snapshot',
+      description: 'Read a bounded coding-oriented project snapshot in one call: Git status, top-level tree, package/scripts, project type hints, and common agent instruction files.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Project directory; defaults to the workspace root.' },
+          include: { type: 'array', items: { type: 'string', enum: ['git', 'tree', 'package', 'scripts', 'instructions'] }, description: 'Sections to include; defaults to all.' },
+          max_tree_entries: { type: 'integer', minimum: 1, maximum: 500, description: 'Maximum top-level entries; defaults to 100.' },
+        },
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => {
+        const requestedPath = optionalString(args, 'path') ?? '.';
+        const include = optionalStringArray(args, 'include') ?? ['git', 'tree', 'package', 'scripts', 'instructions'];
+        const allowed = new Set(['git', 'tree', 'package', 'scripts', 'instructions']);
+        if (include.some((section) => !allowed.has(section))) throw new ToolError('INVALID_ARGUMENT', '"include" contains an unsupported project_snapshot section.');
+        const directory = await listDirectory({ ...access, directoryPath: requestedPath, maxEntries: optionalInteger(args, 'max_tree_entries') ?? 100, includeHidden: false });
+        const names = new Set(directory.entries.map((entry) => entry.name));
+        const projectTypes = [
+          names.has('package.json') ? 'node' : undefined,
+          names.has('go.mod') ? 'go' : undefined,
+          names.has('Cargo.toml') ? 'rust' : undefined,
+          names.has('pyproject.toml') || names.has('requirements.txt') ? 'python' : undefined,
+        ].filter((value): value is string => Boolean(value));
+
+        let packageInfo: Record<string, unknown> | undefined;
+        if ((include.includes('package') || include.includes('scripts')) && names.has('package.json')) {
+          try {
+            const packageRead = await readMachineFile({ ...access, filePath: path.join(directory.path, 'package.json'), maxBytes: 256 * 1024 });
+            const pkg = JSON.parse(packageRead.content) as { name?: string; version?: string; type?: string; scripts?: Record<string, string>; engines?: Record<string, string> };
+            packageInfo = { name: pkg.name, version: pkg.version, type: pkg.type, engines: pkg.engines, scripts: pkg.scripts ?? {} };
+          } catch (error: unknown) {
+            packageInfo = { error: describeError(error) };
+          }
+        }
+
+        let git: unknown;
+        if (include.includes('git')) {
+          try { git = await gitStatus({ ...access, path: directory.path }); }
+          catch (error: unknown) { git = { error: describeError(error) }; }
+        }
+
+        const instructions: unknown[] = [];
+        if (include.includes('instructions')) {
+          for (const relativePath of ['AGENTS.md', 'CLAUDE.md', path.join('.github', 'copilot-instructions.md')]) {
+            try {
+              const read = await readMachineFile({ ...access, filePath: path.join(directory.path, relativePath), maxLines: 400, maxBytes: 64 * 1024 });
+              instructions.push({ path: read.path, sha256: read.sha256, truncated: read.truncated, content: read.content });
+            } catch (error: unknown) {
+              if (describeError(error).code !== 'NOT_FOUND') instructions.push({ path: relativePath, error: describeError(error) });
+            }
+          }
+        }
+
+        return {
+          path: directory.path,
+          projectTypes,
+          ...(include.includes('git') ? { git } : {}),
+          ...(include.includes('tree') ? { tree: directory } : {}),
+          ...(include.includes('package') ? { package: packageInfo } : {}),
+          ...(include.includes('scripts') ? { scripts: (packageInfo?.scripts as Record<string, string> | undefined) ?? {} } : {}),
+          ...(include.includes('instructions') ? { instructions } : {}),
+        };
+      },
     },
     {
       name: 'list_directory',

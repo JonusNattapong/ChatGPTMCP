@@ -4,9 +4,12 @@ All notable changes to ChatGPT Machine MCP are documented here.
 
 ## Unreleased
 
-- Added an allowlisted multi-machine gateway with `machines_list`, `machine_probe`, `machine_tools`, and `machine_call`. Nodes can be selected by id, name, hostname, alias, IP, or host:port; public plaintext HTTP endpoints are rejected and bearer tokens remain environment-only.
-- Added `chatgpt-local machine list|add|remove`, a Git-ignored `.chatgpt-machine/machines.json` registry, per-node HTTP health checks, and remote MCP tool discovery/calls. The `developer` policy approval-gates `machine_call`, while remote nodes still enforce their own policy and audit boundaries.
-- Bumped the public MCP contract to v3 with 41 tools.
+- Added coding-DX read tools: `read_files` batches bounded text reads under one combined byte budget, and `project_snapshot` returns a bounded repository Git/tree/package/scripts/instructions snapshot.
+- Hardened `machine_status` workspace semantics with explicit live `runtimeRoot`, persisted `configuredRoot`, `configApplied`, and a `restartRequired` value derived from supervisor worker state rather than ambiguous path labels.
+- Hardened synchronous PowerShell execution so PowerShell errors fail the shell result instead of returning false success; results now expose `success`, `hadPowerShellError`, and output byte counts. Fixed the Windows tunnel access-mode check so only `unrestricted` adds `--dangerously-open-machine`.
+- Extended the allowlisted multi-machine gateway with `machine_read`, which proves `readOnlyHint=true` from the remote tool surface before execution. Remote capabilities are cached for 60 seconds with a fingerprint and explicit refresh; routed audit records promote `targetMachine` and `remoteTool` to top-level fields.
+- Added `chatgpt-local machine list|add|remove`, a Git-ignored `.chatgpt-machine/machines.json` registry, per-node HTTP health checks, and remote MCP tool discovery/calls. The `developer` policy approval-gates high-authority `machine_call`, while `machine_read` stays read-only and remote nodes still enforce their own policy and audit boundaries.
+- Bumped the public MCP contract to v4 with 44 tools.
 - Simplified `chatgpt-local restart` to an explicit stop/start sequence and removed the detached `refresh-tunnel.*` helper, avoiding a PowerShell self-spawn pattern that endpoint security could quarantine.
 - Added a bounded tunnel watchdog for Windows and Bash. While a tunnel is intentionally active, two consecutive unhealthy runtime checks reconnect it; `chatgpt-local down` stops the watchdog first. The real-supervisor smoke test now keeps its state in its own temporary directory.
 - Hardened the supervised stdio runtime with real `closed`/`open`/`half_open` circuit-breaker states, generation-safe recovery timers, and process-tree termination on Windows and POSIX.

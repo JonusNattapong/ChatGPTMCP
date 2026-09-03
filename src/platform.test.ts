@@ -16,6 +16,12 @@ test('tunnel scripts target the supervised runtime', () => {
   }
 });
 
+test('Windows tunnel only adds unrestricted machine access for the unrestricted config value', () => {
+  const text = readFileSync(path.join(projectRoot, 'scripts/start-tunnel.ps1'), 'utf8');
+  assert.match(text, /\$accessMode -eq 'unrestricted'/);
+  assert.doesNotMatch(text, /\$accessMode -eq 'workspace'/);
+});
+
 test('bash tunnel scripts pass syntax validation when bash is available', (t) => {
   const bash = spawnSync('bash', ['--version'], { stdio: 'ignore' });
   if (bash.status !== 0) return t.skip('bash is not installed');

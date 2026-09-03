@@ -130,14 +130,16 @@ chatgpt-local restart   # build ใหม่ แล้ว stop/start tunnel
 
 ```powershell
 chatgpt-local doctor          # ตรวจ dependencies + permission ของ workspace
-chatgpt-local check           # ตรวจ effective config + fingerprint ของ contract v3 / 41 tools
+chatgpt-local check           # ตรวจ effective config + fingerprint ของ contract v4 / 44 tools
 npm run smoke                 # ทดสอบ MCP จริง + supervisor recovery
 npm run verify                # full test + server contract check
 # Preview mutation ทั้งหมดโดยไม่เขียนจริง:
 node dist/index.js --root D:\Projects\Github --dry-run
 ```
 
-MCP contract ปัจจุบันเป็น v3 มี public tools 41 ตัว พร้อม SHA-256 contract fingerprint ที่คำนวณจากชื่อ, schema และ annotations โดยเพิ่ม multi-machine routing ได้แก่ `machines_list`, `machine_probe`, `machine_tools` และ `machine_call` โดย tools เดิมที่ทำงานกับเครื่อง local ยังทำงานเหมือนเดิม
+MCP contract ปัจจุบันเป็น v4 มี public tools 44 ตัว พร้อม SHA-256 contract fingerprint ที่คำนวณจากชื่อ, schema และ annotations โดยเพิ่ม `read_files`, `project_snapshot` และ remote route แบบ read-only คือ `machine_read`; tools local เดิมและ `machine_call` ที่มี authority สูงยังทำงานเหมือนเดิม
+
+สำหรับงานเขียนโค้ด `read_files` อ่าน text files ได้สูงสุด 50 ไฟล์ใน call เดียวภายใต้ combined byte budget ส่วน `project_snapshot` รวม Git/tree/package/scripts/instructions แบบ bounded เพื่อเข้าใจ repo ได้เร็วขึ้น `machine_status` แยก `runtimeRoot`, `configuredRoot` และ `configApplied` ชัดเจน ทำให้ `restartRequired` อิง live supervisor state จริง นอกจากนี้ synchronous `shell_command` ฝั่ง PowerShell จะ fail-fast เมื่อเจอ PowerShell error และคืน `success`, `hadPowerShellError` กับขนาด output แทนการรายงาน false success
 
 ## Multi-machine routing
 
@@ -159,9 +161,9 @@ $env:MCP_HTTP_TOKEN = '<node-secret>'
 node dist/index.js --http --http-host 0.0.0.0 --http-port 8787 --http-token $env:MCP_HTTP_TOKEN --root D:\Projects --dangerously-open-machine
 ```
 
-ควรเปิด port เฉพาะ LAN, VPN หรือ Tailscale ที่เชื่อถือได้ Gateway ยอมให้ plain HTTP เฉพาะ local/private address ส่วน public endpoint ต้องเป็น HTTPS นอกจากนี้ `developer` policy ฝั่ง gateway จะ approval-gate `machine_call` และ remote node ยังบังคับ workspace, policy, approval และ audit ของตัวเองอีกชั้น
+ควรเปิด port เฉพาะ LAN, VPN หรือ Tailscale ที่เชื่อถือได้ Gateway ยอมให้ plain HTTP เฉพาะ local/private address ส่วน public endpoint ต้องเป็น HTTPS `developer` policy ฝั่ง gateway จะ approval-gate `machine_call` ส่วน `machine_read` ไม่ต้องใช้ mutation approval แต่ gateway จะ discover tool ของ remote ก่อนและยอมรันเฉพาะ tool ที่ประกาศ `readOnlyHint=true`; ถ้า annotation หายหรือเป็น mutation จะ fail closed ขณะที่ remote node ยังบังคับ workspace, policy, approval และ audit ของตัวเองอีกชั้น
 
-จาก ChatGPT ใช้ `machines_list` แล้วตามด้วย `machine_probe`, `machine_tools` หรือ `machine_call` เช่น `machine_call(machine="192.168.1.20", tool="git_status", arguments={...})` จะ route ไปเฉพาะ node ที่ register ตรงกับ IP นั้น ส่วน tools เดิมอย่าง `read_file` ยังทำงานบนเครื่อง gateway ตามปกติ
+จาก ChatGPT ใช้ `machines_list` แล้วตามด้วย `machine_probe`, `machine_tools`, `machine_read` หรือ `machine_call` โดย `machine_tools` cache capability ของ remote 60 วินาที พร้อม fingerprint และใช้ `refresh=true` เพื่อบังคับ rediscover ได้ หาก fingerprint เปลี่ยน cache จะถูกแทนที่ งาน read-only ควรใช้ `machine_read(machine="192.168.1.20", tool="git_status", arguments={...})` ส่วน mutation ค่อยใช้ `machine_call` Audit ของ routed calls จะมี `targetMachine` และ `remoteTool` เป็น field ระดับบน ส่วน tools local อย่าง `read_file` ยังทำงานบนเครื่อง gateway ตามปกติ
 
 เมื่อใช้ local HTTP transport สามารถดู recent-call viewer ที่ทำ redaction แล้วได้ที่ `http://127.0.0.1:8787/ui` หากเปิด `MCP_HTTP_TOKEN` endpoint ของ UI จะต้องใช้ Bearer authorization header เดียวกัน
 

@@ -20,7 +20,7 @@ $watchdogScript = Join-Path $PSScriptRoot 'watch-tunnel.ps1'
 $watchdogPidPath = Join-Path $projectRoot '.tunnel\watch-tunnel.pid'
 $workspaceArg = $workspaceRoot.Replace('\', '/')
 $machinesArg = $machinesFile.Replace('\', '/')
-$openArg = if ($accessMode -eq 'workspace') { '' } else { ' --dangerously-open-machine' }
+$openArg = if ($accessMode -eq 'unrestricted') { ' --dangerously-open-machine' } else { '' }
 $mcpCommand = "node $supervisorPath --supervisor-timeout $supervisorTimeout --root `"$workspaceArg`" --policy $policy --approval-mode $approvalMode --machines-file `"$machinesArg`"$openArg"
 
 if (-not (Test-Path -LiteralPath $clientPath)) {

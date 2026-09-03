@@ -80,6 +80,29 @@ test('shell preserves UTF-8 output and returns execution metadata', async () => 
   }
 });
 
+test('PowerShell non-terminating errors are converted into a failed shell result', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows PowerShell behavior is Windows-only');
+  const root = await mkdtemp(path.join(tmpdir(), 'machine-mcp-powershell-error-'));
+  try {
+    const result = await runShellCommand({
+      command: "Write-Error 'intentional failure'; Write-Output 'should-not-continue'",
+      root,
+      unrestricted: false,
+      shell: 'powershell',
+      timeoutMs: 10_000,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.hadPowerShellError, true);
+    assert.notEqual(result.exitCode, 0);
+    assert.match(result.stderr, /intentional failure/i);
+    assert.doesNotMatch(result.stderr, /__CHATGPT_MACHINE_POWERSHELL_ERROR__/);
+    assert.equal(result.stdout.includes('should-not-continue'), false);
+    assert.ok(result.stderrBytes > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('shell stops when the configured output limit is reached', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'machine-mcp-output-'));
   try {

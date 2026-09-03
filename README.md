@@ -135,14 +135,16 @@ Useful local checks:
 
 ```powershell
 chatgpt-local doctor          # dependencies + workspace permissions
-chatgpt-local check           # effective config + v3 / 41-tool contract fingerprint
+chatgpt-local check           # effective config + v4 / 44-tool contract fingerprint
 npm run smoke                 # real MCP + supervisor recovery smoke tests
 npm run verify                # full tests + server contract check
 # Preview all mutations without executing them:
 node dist/index.js --root D:\Projects\Github --dry-run
 ```
 
-The current MCP contract is v3: 41 public tools with a SHA-256 fingerprint derived from tool names, schemas, and annotations. It adds the multi-machine routing surface (`machines_list`, `machine_probe`, `machine_tools`, and `machine_call`) while preserving all existing local tools.
+The current MCP contract is v4: 44 public tools with a SHA-256 fingerprint derived from tool names, schemas, and annotations. The coding-oriented additions are `read_files`, `project_snapshot`, and the read-only remote route `machine_read`; existing local tools and the high-authority `machine_call` route remain available.
+
+For coding work, `read_files` batches up to 50 bounded text reads under one combined byte budget, while `project_snapshot` returns a bounded Git/tree/package/scripts/instructions view for fast repository orientation. `machine_status` now reports `runtimeRoot`, `configuredRoot`, and `configApplied` separately so `restartRequired` is derived from live supervisor state instead of ambiguous path labels. Synchronous PowerShell `shell_command` calls use fail-fast PowerShell error handling and report `success`, `hadPowerShellError`, and output byte counts rather than treating a non-terminating PowerShell error as success.
 
 ## Multi-machine routing
 
@@ -164,9 +166,9 @@ $env:MCP_HTTP_TOKEN = '<node-secret>'
 node dist/index.js --http --http-host 0.0.0.0 --http-port 8787 --http-token $env:MCP_HTTP_TOKEN --root D:\Projects --dangerously-open-machine
 ```
 
-Keep the node port restricted to the trusted LAN, VPN, or Tailscale network. Plain HTTP is accepted by the gateway only for local/private addresses; public endpoints must use HTTPS. The `developer` gateway policy approval-gates `machine_call`, and the selected remote node independently enforces its own workspace, policy, approval, and audit rules.
+Keep the node port restricted to the trusted LAN, VPN, or Tailscale network. Plain HTTP is accepted by the gateway only for local/private addresses; public endpoints must use HTTPS. The `developer` gateway policy approval-gates `machine_call`. `machine_read` does not need that mutation approval, but it first discovers the selected remote tool and requires its `readOnlyHint=true` annotation; missing or mutating annotations fail closed. The selected remote node independently enforces its own workspace, policy, approval, and audit rules.
 
-From ChatGPT, use `machines_list`, then `machine_probe`, `machine_tools`, or `machine_call`. For example, `machine_call(machine="192.168.1.20", tool="git_status", arguments={...})` routes only to the matching registered node. Existing tools such as `read_file` continue to operate on the gateway machine itself.
+From ChatGPT, use `machines_list`, then `machine_probe`, `machine_tools`, `machine_read`, or `machine_call`. `machine_tools` caches the remote capability list for 60 seconds, exposes a capability fingerprint, and accepts `refresh=true` to force rediscovery; a changed fingerprint replaces the cached entry. Prefer `machine_read(machine="192.168.1.20", tool="git_status", arguments={...})` for proven read-only work and reserve `machine_call` for mutations. Routed audit records expose `targetMachine` and `remoteTool` as top-level fields. Existing tools such as `read_file` continue to operate on the gateway machine itself.
 
 When using local HTTP transport, the redacted recent-call viewer is available at `http://127.0.0.1:8787/ui`. If `MCP_HTTP_TOKEN` is enabled, the UI endpoints require the same Bearer authorization header.
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ToolError } from './errors.js';
@@ -23,7 +24,28 @@ interface RouterOptions {
   timeoutMs: number;
 }
 
-const ROUTER_TOOLS = new Set(['machines_list', 'machine_probe', 'machine_tools', 'machine_call']);
+interface RemoteToolDescriptor {
+  name: string;
+  description?: string;
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    openWorldHint?: boolean;
+    [key: string]: unknown;
+  };
+}
+
+interface CapabilityCacheEntry {
+  tools: RemoteToolDescriptor[];
+  fingerprint: string;
+  fingerprintSource: 'remote-contract' | 'tools-list';
+  fetchedAt: number;
+  expiresAt: number;
+}
+
+const ROUTER_TOOLS = new Set(['machines_list', 'machine_probe', 'machine_tools', 'machine_read', 'machine_call']);
+const CAPABILITY_TTL_MS = 60_000;
+const capabilityCache = new Map<string, CapabilityCacheEntry>();
 
 export function machinesConfigPath(projectRoot: string): string {
   return path.join(projectRoot, '.chatgpt-machine', 'machines.json');
@@ -38,7 +60,14 @@ function privateIpv4(host: string): boolean {
 
 function allowsPlainHttp(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  return host === 'localhost' || host === '::1' || host.endsWith('.local') || (!host.includes('.') && !host.includes(':')) || privateIpv4(host) || host.startsWith('fe80:') || host.startsWith('fd') || host.startsWith('fc');
+  return host === 'localhost'
+    || host === '::1'
+    || host.endsWith('.local')
+    || (!host.includes('.') && !host.includes(':'))
+    || privateIpv4(host)
+    || host.startsWith('fe80:')
+    || host.startsWith('fd')
+    || host.startsWith('fc');
 }
 
 export function normalizeMachineEndpoint(input: string): string {
@@ -46,11 +75,17 @@ export function normalizeMachineEndpoint(input: string): string {
   if (!trimmed) throw new ToolError('INVALID_ARGUMENT', 'Machine endpoint must be a non-empty string.');
   const raw = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
   let url: URL;
-  try { url = new URL(raw); } catch { throw new ToolError('INVALID_ARGUMENT', `Invalid machine endpoint: ${input}`); }
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ToolError('INVALID_ARGUMENT', `Invalid machine endpoint: ${input}`);
+  }
   if (!['http:', 'https:'].includes(url.protocol)) throw new ToolError('INVALID_ARGUMENT', 'Machine endpoint must use http:// or https://.');
   if (url.username || url.password) throw new ToolError('INVALID_ARGUMENT', 'Credentials must not be embedded in a machine endpoint URL.');
   if (url.search || url.hash) throw new ToolError('INVALID_ARGUMENT', 'Machine endpoint must not contain a query string or fragment.');
-  if (url.protocol === 'http:' && !allowsPlainHttp(url.hostname)) throw new ToolError('INVALID_ARGUMENT', `Refusing plaintext HTTP to non-private host ${url.hostname}. Use HTTPS or a private LAN/Tailscale address.`);
+  if (url.protocol === 'http:' && !allowsPlainHttp(url.hostname)) {
+    throw new ToolError('INVALID_ARGUMENT', `Refusing plaintext HTTP to non-private host ${url.hostname}. Use HTTPS or a private LAN/Tailscale address.`);
+  }
   if (url.pathname === '/' || url.pathname === '') url.pathname = '/mcp';
   return url.toString().replace(/\/$/, '');
 }
@@ -66,21 +101,44 @@ function validateEntry(raw: unknown, index: number): MachineRegistryEntry {
   if (v.name !== undefined && typeof v.name !== 'string') throw new ToolError('INVALID_ARGUMENT', `machines[${index}].name must be a string.`);
   if (v.hostname !== undefined && typeof v.hostname !== 'string') throw new ToolError('INVALID_ARGUMENT', `machines[${index}].hostname must be a string.`);
   if (v.enabled !== undefined && typeof v.enabled !== 'boolean') throw new ToolError('INVALID_ARGUMENT', `machines[${index}].enabled must be a boolean.`);
-  return { id: v.id, endpoint: normalizeMachineEndpoint(v.endpoint), name: v.name as string | undefined, hostname: v.hostname as string | undefined, aliases: aliases as string[] | undefined, tokenEnv: v.tokenEnv as string | undefined, enabled: v.enabled as boolean | undefined };
+  return {
+    id: v.id,
+    endpoint: normalizeMachineEndpoint(v.endpoint),
+    name: v.name as string | undefined,
+    hostname: v.hostname as string | undefined,
+    aliases: aliases as string[] | undefined,
+    tokenEnv: v.tokenEnv as string | undefined,
+    enabled: v.enabled as boolean | undefined,
+  };
 }
 
 export function readMachineRegistry(file?: string): MachineRegistryDocument {
   if (!file || !existsSync(file)) return { version: 1, machines: [] };
   let parsed: unknown;
-  try { parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown; } catch (error) { throw new ToolError('INVALID_ARGUMENT', `Could not parse machine registry ${file}: ${error instanceof Error ? error.message : String(error)}`); }
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+  } catch (error) {
+    throw new ToolError('INVALID_ARGUMENT', `Could not parse machine registry ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ToolError('INVALID_ARGUMENT', 'Machine registry must be a JSON object.');
   const doc = parsed as Record<string, unknown>;
   if (doc.version !== 1) throw new ToolError('INVALID_ARGUMENT', `Unsupported machine registry version: ${String(doc.version)}.`);
   if (!Array.isArray(doc.machines)) throw new ToolError('INVALID_ARGUMENT', 'Machine registry must contain a machines array.');
   const machines = doc.machines.map(validateEntry);
   const ids = new Set<string>();
-  for (const machine of machines) { const key = machine.id.toLowerCase(); if (ids.has(key)) throw new ToolError('AMBIGUOUS_MATCH', `Duplicate machine id: ${machine.id}`); ids.add(key); }
+  for (const machine of machines) {
+    const key = machine.id.toLowerCase();
+    if (ids.has(key)) throw new ToolError('AMBIGUOUS_MATCH', `Duplicate machine id: ${machine.id}`);
+    ids.add(key);
+  }
   return { version: 1, machines };
+}
+
+function invalidateMachineCapabilities(id: string): void {
+  const prefix = `${id.toLowerCase()}\0`;
+  for (const key of capabilityCache.keys()) {
+    if (key.startsWith(prefix)) capabilityCache.delete(key);
+  }
 }
 
 export function writeMachineRegistry(file: string, registry: MachineRegistryDocument): void {
@@ -92,8 +150,10 @@ export function writeMachineRegistry(file: string, registry: MachineRegistryDocu
 export function upsertMachine(file: string, entry: MachineRegistryEntry): MachineRegistryEntry {
   const registry = readMachineRegistry(file);
   const validated = validateEntry(entry, registry.machines.length);
+  invalidateMachineCapabilities(validated.id);
   const i = registry.machines.findIndex((m) => m.id.toLowerCase() === validated.id.toLowerCase());
-  if (i >= 0) registry.machines[i] = validated; else registry.machines.push(validated);
+  if (i >= 0) registry.machines[i] = validated;
+  else registry.machines.push(validated);
   writeMachineRegistry(file, registry);
   return validated;
 }
@@ -103,13 +163,16 @@ export function removeMachine(file: string, id: string): boolean {
   const before = registry.machines.length;
   registry.machines = registry.machines.filter((m) => m.id.toLowerCase() !== id.toLowerCase());
   if (registry.machines.length === before) return false;
+  invalidateMachineCapabilities(id);
   writeMachineRegistry(file, registry);
   return true;
 }
 
 function selectors(machine: MachineRegistryEntry): string[] {
   const url = new URL(machine.endpoint);
-  return [machine.id, machine.name, machine.hostname, url.hostname.replace(/^\[|\]$/g, ''), url.host, ...(machine.aliases ?? [])].filter((x): x is string => typeof x === 'string' && x.length > 0).map((x) => x.toLowerCase());
+  return [machine.id, machine.name, machine.hostname, url.hostname.replace(/^\[|\]$/g, ''), url.host, ...(machine.aliases ?? [])]
+    .filter((x): x is string => typeof x === 'string' && x.length > 0)
+    .map((x) => x.toLowerCase());
 }
 
 export function resolveMachine(registry: MachineRegistryDocument, selector: string): MachineRegistryEntry {
@@ -123,7 +186,17 @@ export function resolveMachine(registry: MachineRegistryDocument, selector: stri
 
 function publicMachine(machine: MachineRegistryEntry) {
   const url = new URL(machine.endpoint);
-  return { id: machine.id, name: machine.name, hostname: machine.hostname, endpoint: machine.endpoint, address: url.hostname.replace(/^\[|\]$/g, ''), aliases: machine.aliases ?? [], enabled: machine.enabled !== false, authentication: machine.tokenEnv ? (process.env[machine.tokenEnv] ? 'configured' : 'missing') : 'none', tokenEnv: machine.tokenEnv };
+  return {
+    id: machine.id,
+    name: machine.name,
+    hostname: machine.hostname,
+    endpoint: machine.endpoint,
+    address: url.hostname.replace(/^\[|\]$/g, ''),
+    aliases: machine.aliases ?? [],
+    enabled: machine.enabled !== false,
+    authentication: machine.tokenEnv ? (process.env[machine.tokenEnv] ? 'configured' : 'missing') : 'none',
+    tokenEnv: machine.tokenEnv,
+  };
 }
 
 function authHeaders(machine: MachineRegistryEntry): Record<string, string> {
@@ -136,17 +209,30 @@ function authHeaders(machine: MachineRegistryEntry): Record<string, string> {
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try { return await fetch(url, { ...init, signal: controller.signal }); }
-  catch (error) { if (controller.signal.aborted) throw new ToolError('TIMEOUT', `Remote machine request timed out after ${timeoutMs} ms.`); throw new ToolError('NETWORK', error instanceof Error ? error.message : String(error)); }
-  finally { clearTimeout(timer); }
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new ToolError('TIMEOUT', `Remote machine request timed out after ${timeoutMs} ms.`);
+    throw new ToolError('NETWORK', error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function rpc(machine: MachineRegistryEntry, method: string, params: Record<string, unknown> | undefined, timeoutMs: number): Promise<unknown> {
-  const response = await fetchWithTimeout(machine.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', ...authHeaders(machine) }, body: JSON.stringify({ jsonrpc: '2.0', id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, method, ...(params ? { params } : {}) }) }, timeoutMs);
+  const response = await fetchWithTimeout(machine.endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json', ...authHeaders(machine) },
+    body: JSON.stringify({ jsonrpc: '2.0', id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, method, ...(params ? { params } : {}) }),
+  }, timeoutMs);
   const text = await response.text();
   if (!response.ok) throw new ToolError('NETWORK', `Machine ${machine.id} returned HTTP ${response.status}.`, undefined, { status: response.status, body: text.slice(0, 2048) });
   let payload: Record<string, unknown>;
-  try { payload = JSON.parse(text) as Record<string, unknown>; } catch { throw new ToolError('NETWORK', `Machine ${machine.id} returned a non-JSON MCP response.`, undefined, { body: text.slice(0, 2048) }); }
+  try {
+    payload = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new ToolError('NETWORK', `Machine ${machine.id} returned a non-JSON MCP response.`, undefined, { body: text.slice(0, 2048) });
+  }
   if (payload.error) throw new ToolError('REMOTE_ERROR', `Remote MCP error from ${machine.id}.`, undefined, { remote: payload.error as Record<string, unknown> });
   if (!('result' in payload)) throw new ToolError('REMOTE_ERROR', `Remote MCP response from ${machine.id} did not contain a result.`);
   return payload.result;
@@ -157,9 +243,85 @@ function decodeToolResult(result: unknown): unknown {
   const content = (result as Record<string, unknown>).content;
   if (Array.isArray(content) && content.length === 1) {
     const item = content[0] as Record<string, unknown> | undefined;
-    if (item?.type === 'text' && typeof item.text === 'string') { try { return JSON.parse(item.text) as unknown; } catch { return item.text; } }
+    if (item?.type === 'text' && typeof item.text === 'string') {
+      try {
+        return JSON.parse(item.text) as unknown;
+      } catch {
+        return item.text;
+      }
+    }
   }
   return result;
+}
+
+function normalizeRemoteTools(value: unknown): RemoteToolDescriptor[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const tool = entry as Record<string, unknown>;
+    if (typeof tool.name !== 'string' || !tool.name) return [];
+    return [{
+      name: tool.name,
+      description: typeof tool.description === 'string' ? tool.description : undefined,
+      annotations: tool.annotations && typeof tool.annotations === 'object' && !Array.isArray(tool.annotations)
+        ? tool.annotations as RemoteToolDescriptor['annotations']
+        : undefined,
+    }];
+  });
+}
+
+function capabilityFingerprint(tools: RemoteToolDescriptor[]): string {
+  const canonical = tools
+    .map((tool) => ({ name: tool.name, annotations: tool.annotations ?? {} }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+function capabilityCacheKey(machine: MachineRegistryEntry): string {
+  return `${machine.id.toLowerCase()}\0${machine.endpoint}`;
+}
+
+async function getCapabilities(machine: MachineRegistryEntry, timeoutMs: number, forceRefresh = false) {
+  const key = capabilityCacheKey(machine);
+  const now = Date.now();
+  const cached = capabilityCache.get(key);
+  if (!forceRefresh && cached && cached.expiresAt > now) {
+    return { ...cached, cacheHit: true, changed: false };
+  }
+
+  const result = await rpc(machine, 'tools/list', undefined, timeoutMs) as Record<string, unknown>;
+  const tools = normalizeRemoteTools(result.tools);
+  const remoteFingerprint = typeof result.contractFingerprint === 'string' ? result.contractFingerprint : undefined;
+  const fingerprint = remoteFingerprint ?? capabilityFingerprint(tools);
+  const next: CapabilityCacheEntry = {
+    tools,
+    fingerprint,
+    fingerprintSource: remoteFingerprint ? 'remote-contract' : 'tools-list',
+    fetchedAt: now,
+    expiresAt: now + CAPABILITY_TTL_MS,
+  };
+  const changed = Boolean(cached && cached.fingerprint !== fingerprint);
+  capabilityCache.set(key, next);
+  return { ...next, cacheHit: false, changed };
+}
+
+function validateRemoteCallArgs(args: Record<string, unknown>, registry: MachineRegistryDocument) {
+  if (typeof args.machine !== 'string' || !args.machine) throw new ToolError('INVALID_ARGUMENT', '"machine" is required.');
+  if (typeof args.tool !== 'string' || !args.tool) throw new ToolError('INVALID_ARGUMENT', '"tool" is required.');
+  if (ROUTER_TOOLS.has(args.tool)) throw new ToolError('INVALID_ARGUMENT', `Routing tool ${args.tool} cannot be called through another routing tool.`);
+  if (args.arguments !== undefined && (!args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments))) throw new ToolError('INVALID_ARGUMENT', '"arguments" must be an object.');
+  return {
+    machine: resolveMachine(registry, args.machine),
+    tool: args.tool,
+    arguments: (args.arguments as Record<string, unknown> | undefined) ?? {},
+  };
+}
+
+function remoteFailure(machine: MachineRegistryEntry, tool: string, raw: unknown, decoded: unknown): void {
+  if ((raw as { isError?: boolean } | undefined)?.isError === true
+    || (decoded && typeof decoded === 'object' && !Array.isArray(decoded) && (decoded as Record<string, unknown>).ok === false)) {
+    throw new ToolError('REMOTE_ERROR', `Remote tool ${tool} failed on machine ${machine.id}.`, undefined, { machine: machine.id, tool, result: decoded as Record<string, unknown> });
+  }
 }
 
 async function probe(machine: MachineRegistryEntry, timeoutMs: number) {
@@ -167,18 +329,131 @@ async function probe(machine: MachineRegistryEntry, timeoutMs: number) {
   const health = new URL('/healthz', machine.endpoint).toString();
   try {
     const response = await fetchWithTimeout(health, { headers: { accept: 'application/json', ...authHeaders(machine) } }, timeoutMs);
-    const body = await response.text(); let details: unknown = body; try { details = JSON.parse(body) as unknown; } catch {}
+    const body = await response.text();
+    let details: unknown = body;
+    try { details = JSON.parse(body) as unknown; } catch { /* keep text */ }
     return { ...publicMachine(machine), online: response.ok, latencyMs: Date.now() - startedAt, statusCode: response.status, health: details };
-  } catch (error) { return { ...publicMachine(machine), online: false, latencyMs: Date.now() - startedAt, error: error instanceof Error ? error.message : String(error) }; }
+  } catch (error) {
+    return { ...publicMachine(machine), online: false, latencyMs: Date.now() - startedAt, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export function createMachineRoutingSpecs(options: RouterOptions): ToolSpec[] {
   const registry = () => readMachineRegistry(options.machinesFile);
   const timeout = Math.max(1_000, Math.min(options.timeoutMs, 60_000));
+  const timeoutFrom = (args: Record<string, unknown>) => {
+    if (args.timeout_ms === undefined) return timeout;
+    if (typeof args.timeout_ms !== 'number' || !Number.isInteger(args.timeout_ms) || args.timeout_ms < 1_000 || args.timeout_ms > 60_000) {
+      throw new ToolError('INVALID_ARGUMENT', '"timeout_ms" must be an integer between 1000 and 60000.');
+    }
+    return args.timeout_ms;
+  };
+
   return [
-    { name: 'machines_list', description: 'List registered remote machines. Selectors may be id, name, hostname, alias, IP address, or host:port. This call does not contact remote machines.', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, handler: async () => ({ registryFile: options.machinesFile, machines: registry().machines.map(publicMachine) }) },
-    { name: 'machine_probe', description: 'Check health and latency of one registered remote machine selected by id, name, hostname, alias, IP address, or host:port.', inputSchema: { type: 'object', properties: { machine: { type: 'string' }, timeout_ms: { type: 'integer', minimum: 1000, maximum: 60000 } }, required: ['machine'] }, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true }, handler: async (args) => { if (typeof args.machine !== 'string' || !args.machine) throw new ToolError('INVALID_ARGUMENT', '"machine" is required.'); const t = typeof args.timeout_ms === 'number' && Number.isInteger(args.timeout_ms) ? args.timeout_ms : timeout; return probe(resolveMachine(registry(), args.machine), t); } },
-    { name: 'machine_tools', description: 'List tool names and annotations exposed by one registered remote machine.', inputSchema: { type: 'object', properties: { machine: { type: 'string' } }, required: ['machine'] }, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true }, handler: async (args) => { if (typeof args.machine !== 'string' || !args.machine) throw new ToolError('INVALID_ARGUMENT', '"machine" is required.'); const machine = resolveMachine(registry(), args.machine); const result = await rpc(machine, 'tools/list', undefined, timeout) as { tools?: Array<Record<string, unknown>> }; return { machine: publicMachine(machine), tools: (result.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, annotations: tool.annotations })) }; } },
-    { name: 'machine_call', description: 'Run one MCP tool on a registered remote machine. The remote machine still enforces its own policy, workspace boundary, approvals, and audit log.', inputSchema: { type: 'object', properties: { machine: { type: 'string' }, tool: { type: 'string' }, arguments: { type: 'object' }, timeout_ms: { type: 'integer', minimum: 1000, maximum: 60000 } }, required: ['machine', 'tool'] }, annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, handler: async (args) => { if (typeof args.machine !== 'string' || !args.machine) throw new ToolError('INVALID_ARGUMENT', '"machine" is required.'); if (typeof args.tool !== 'string' || !args.tool) throw new ToolError('INVALID_ARGUMENT', '"tool" is required.'); if (ROUTER_TOOLS.has(args.tool)) throw new ToolError('INVALID_ARGUMENT', `Routing tool ${args.tool} cannot be called through machine_call.`); if (args.arguments !== undefined && (!args.arguments || typeof args.arguments !== 'object' || Array.isArray(args.arguments))) throw new ToolError('INVALID_ARGUMENT', '"arguments" must be an object.'); const t = typeof args.timeout_ms === 'number' && Number.isInteger(args.timeout_ms) ? args.timeout_ms : timeout; const machine = resolveMachine(registry(), args.machine); const raw = await rpc(machine, 'tools/call', { name: args.tool, arguments: (args.arguments as Record<string, unknown> | undefined) ?? {} }, t); const decoded = decodeToolResult(raw); if ((raw as { isError?: boolean } | undefined)?.isError === true || (decoded && typeof decoded === 'object' && !Array.isArray(decoded) && (decoded as Record<string, unknown>).ok === false)) throw new ToolError('REMOTE_ERROR', `Remote tool ${args.tool} failed on machine ${machine.id}.`, undefined, { machine: machine.id, tool: args.tool, result: decoded as Record<string, unknown> }); return { machine: publicMachine(machine), tool: args.tool, result: decoded }; } },
+    {
+      name: 'machines_list',
+      description: 'List registered remote machines. Selectors may be id, name, hostname, alias, IP address, or host:port. This call does not contact remote machines.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async () => ({ registryFile: options.machinesFile, machines: registry().machines.map(publicMachine) }),
+    },
+    {
+      name: 'machine_probe',
+      description: 'Check health and latency of one registered remote machine selected by id, name, hostname, alias, IP address, or host:port.',
+      inputSchema: { type: 'object', properties: { machine: { type: 'string' }, timeout_ms: { type: 'integer', minimum: 1000, maximum: 60000 } }, required: ['machine'] },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      handler: async (args) => {
+        if (typeof args.machine !== 'string' || !args.machine) throw new ToolError('INVALID_ARGUMENT', '"machine" is required.');
+        return probe(resolveMachine(registry(), args.machine), timeoutFrom(args));
+      },
+    },
+    {
+      name: 'machine_tools',
+      description: 'List and cache tool capabilities exposed by one registered remote machine. Cache entries live for 60 seconds and are replaced when a refreshed capability fingerprint changes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          machine: { type: 'string' },
+          refresh: { type: 'boolean', description: 'Bypass the 60-second capability cache.' },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: 60000 },
+        },
+        required: ['machine'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      handler: async (args) => {
+        if (typeof args.machine !== 'string' || !args.machine) throw new ToolError('INVALID_ARGUMENT', '"machine" is required.');
+        if (args.refresh !== undefined && typeof args.refresh !== 'boolean') throw new ToolError('INVALID_ARGUMENT', '"refresh" must be a boolean.');
+        const machine = resolveMachine(registry(), args.machine);
+        const capabilities = await getCapabilities(machine, timeoutFrom(args), args.refresh === true);
+        return {
+          machine: publicMachine(machine),
+          tools: capabilities.tools,
+          cache: {
+            hit: capabilities.cacheHit,
+            fingerprint: capabilities.fingerprint,
+            fingerprintSource: capabilities.fingerprintSource,
+            changed: capabilities.changed,
+            fetchedAt: new Date(capabilities.fetchedAt).toISOString(),
+            expiresAt: new Date(capabilities.expiresAt).toISOString(),
+          },
+        };
+      },
+    },
+    {
+      name: 'machine_read',
+      description: 'Run a remote MCP tool only after the gateway verifies that the registered remote tool declares readOnlyHint=true. Mutating or unannotated tools fail closed and must use machine_call instead.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          machine: { type: 'string' },
+          tool: { type: 'string' },
+          arguments: { type: 'object' },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: 60000 },
+        },
+        required: ['machine', 'tool'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      handler: async (args) => {
+        const selected = validateRemoteCallArgs(args, registry());
+        const t = timeoutFrom(args);
+        const capabilities = await getCapabilities(selected.machine, t);
+        const remoteTool = capabilities.tools.find((tool) => tool.name === selected.tool);
+        if (!remoteTool) throw new ToolError('NOT_FOUND', `Remote tool ${selected.tool} is not exposed by machine ${selected.machine.id}.`, 'Use machine_tools to inspect the remote tool surface.');
+        if (remoteTool.annotations?.readOnlyHint !== true) {
+          throw new ToolError('POLICY_DENIED', `Remote tool ${selected.tool} is not explicitly read-only on machine ${selected.machine.id}.`, 'Use machine_call for mutating or unannotated remote tools.');
+        }
+        const raw = await rpc(selected.machine, 'tools/call', { name: selected.tool, arguments: selected.arguments }, t);
+        const decoded = decodeToolResult(raw);
+        remoteFailure(selected.machine, selected.tool, raw, decoded);
+        return {
+          machine: publicMachine(selected.machine),
+          tool: selected.tool,
+          capabilityFingerprint: capabilities.fingerprint,
+          result: decoded,
+        };
+      },
+    },
+    {
+      name: 'machine_call',
+      description: 'Run one MCP tool on a registered remote machine. This is the high-authority routing path; the remote machine still enforces its own policy, workspace boundary, approvals, and audit log.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          machine: { type: 'string' },
+          tool: { type: 'string' },
+          arguments: { type: 'object' },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: 60000 },
+        },
+        required: ['machine', 'tool'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      handler: async (args) => {
+        const selected = validateRemoteCallArgs(args, registry());
+        const raw = await rpc(selected.machine, 'tools/call', { name: selected.tool, arguments: selected.arguments }, timeoutFrom(args));
+        const decoded = decodeToolResult(raw);
+        remoteFailure(selected.machine, selected.tool, raw, decoded);
+        return { machine: publicMachine(selected.machine), tool: selected.tool, result: decoded };
+      },
+    },
   ];
 }

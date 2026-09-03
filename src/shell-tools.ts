@@ -27,8 +27,12 @@ export interface ShellCommandResult {
   shell: Exclude<ShellKind, 'auto'>;
   workdir: string;
   exitCode: number | null;
+  success: boolean;
+  hadPowerShellError: boolean;
   stdout: string;
   stderr: string;
+  stdoutBytes: number;
+  stderrBytes: number;
   timedOut: boolean;
   outputTruncated: boolean;
   durationMs: number;
@@ -45,6 +49,27 @@ interface PatchOperation {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+const POWERSHELL_ERROR_MARKER_PREFIX = '__CHATGPT_MACHINE_POWERSHELL_ERROR__';
+
+function wrapPowerShellCommand(command: string, marker: string): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    '$global:LASTEXITCODE = $null',
+    'try {',
+    '  & {',
+    command,
+    '  }',
+    '  $chatgptMachineSucceeded = $?',
+    '  $chatgptMachineNativeExit = $LASTEXITCODE',
+    "  if (-not $chatgptMachineSucceeded) { throw 'PowerShell command reported failure.' }",
+    '  if ($null -ne $chatgptMachineNativeExit -and $chatgptMachineNativeExit -ne 0) { exit $chatgptMachineNativeExit }',
+    '} catch {',
+    `  [Console]::Error.WriteLine('${marker}')`,
+    '  [Console]::Error.WriteLine(($_ | Out-String))',
+    '  exit 1',
+    '}',
+  ].join('\n');
+}
 
 function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
@@ -169,7 +194,11 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
   const shell = selectShell(options.shell ?? 'auto');
 
   return await new Promise<ShellCommandResult>((resolve, reject) => {
-    const child = spawn(shell.executable, [...shell.args, options.command], {
+    const powerShellErrorMarker = shell.kind === 'powershell'
+      ? `${POWERSHELL_ERROR_MARKER_PREFIX}_${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}`
+      : undefined;
+    const executedCommand = shell.kind === 'powershell' ? wrapPowerShellCommand(options.command, powerShellErrorMarker!) : options.command;
+    const child = spawn(shell.executable, [...shell.args, executedCommand], {
       cwd: workdir,
       env: options.env ? { ...process.env, ...options.env } : process.env,
       windowsHide: true,
@@ -228,16 +257,28 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
       clearTimeout(timer);
       stdout += stdoutDecoder.end();
       stderr += stderrDecoder.end();
+      const hadPowerShellError = powerShellErrorMarker !== undefined && stderr.includes(powerShellErrorMarker);
+      if (hadPowerShellError) {
+        stderr = stderr
+          .split(/\r?\n/)
+          .filter((line) => line.trim() !== powerShellErrorMarker)
+          .join(process.platform === 'win32' ? '\r\n' : '\n');
+      }
       if (outputTruncated) {
         stderr += `${stderr ? '\n' : ''}Output reached the ${maxOutputBytes}-byte limit and the process tree was stopped.`;
       }
+      const success = exitCode === 0 && !timedOut && !outputTruncated && !hadPowerShellError;
       resolve({
         shell: shell.kind,
         command: options.command,
         workdir,
         exitCode,
+        success,
+        hadPowerShellError,
         stdout,
         stderr,
+        stdoutBytes: Buffer.byteLength(stdout),
+        stderrBytes: Buffer.byteLength(stderr),
         timedOut,
         outputTruncated,
         durationMs: Date.now() - startedAt,

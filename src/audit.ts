@@ -13,6 +13,8 @@ export interface AuditRecord {
   durationMs: number;
   args?: Record<string, unknown>;
   errorCode?: string;
+  targetMachine?: string;
+  remoteTool?: string;
 }
 
 const SECRET_KEY = /(password|passwd|secret|token|authorization|cookie|credential|api[_-]?key|private[_-]?key)/i;
@@ -86,8 +88,12 @@ export class AuditLogger {
   }
 
   write(record: AuditRecord): Promise<void> {
+    const targetMachine = record.targetMachine ?? (typeof record.args?.machine === 'string' ? record.args.machine.slice(0, 256) : undefined);
+    const remoteTool = record.remoteTool ?? (typeof record.args?.tool === 'string' ? record.args.tool.slice(0, 256) : undefined);
     const finalized = {
       ...record,
+      targetMachine,
+      remoteTool,
       id: record.id ?? randomUUID(),
       timestamp: record.timestamp ?? new Date().toISOString(),
       args: record.args ? this.sanitizeArgs(record.args) : undefined,

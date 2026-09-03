@@ -28,6 +28,7 @@ test('readonly policy denies mutations and developer policy approval-gates high-
     assert.equal(evaluatePolicy(readonly, byName.get('write_file')!, { path: 'a.txt', content: 'x' }, root).allowed, false);
     assert.equal(evaluatePolicy(readonly, byName.get('shell_command')!, { command: 'echo hi' }, root).allowed, false);
     assert.equal(evaluatePolicy(readonly, byName.get('machine_call')!, { machine: 'server', tool: 'read_file', arguments: { path: 'README.md' } }, root).allowed, false);
+    assert.equal(evaluatePolicy(readonly, byName.get('machine_read')!, { machine: 'server', tool: 'read_file', arguments: { path: 'README.md' } }, root).allowed, false);
 
     const developer = loadPolicy('developer', root);
     const shell = evaluatePolicy(developer, byName.get('shell_command')!, { command: 'npm test', workdir: root }, root);
@@ -36,6 +37,9 @@ test('readonly policy denies mutations and developer policy approval-gates high-
     const routed = evaluatePolicy(developer, byName.get('machine_call')!, { machine: 'server', tool: 'read_file', arguments: { path: 'README.md' } }, root);
     assert.equal(routed.allowed, true);
     assert.equal(routed.requiresApproval, true);
+    const routedRead = evaluatePolicy(developer, byName.get('machine_read')!, { machine: 'server', tool: 'read_file', arguments: { path: 'README.md' } }, root);
+    assert.equal(routedRead.allowed, true);
+    assert.equal(routedRead.requiresApproval, false);
     assert.equal(evaluatePolicy(developer, byName.get('read_file')!, { path: 'README.md' }, root).requiresApproval, false);
     assert.equal(evaluatePolicy(loadPolicy('admin', root), byName.get('read_file')!, { path: '.env' }, root).allowed, false);
     assert.equal(evaluatePolicy(loadPolicy('admin', root), byName.get('read_file')!, { path: '.ssh/id_ed25519' }, root).allowed, false);
@@ -106,6 +110,26 @@ test('audit log redacts secrets and hashes large mutation payloads', async () =>
     assert.match(text, /sha256:/);
     assert.equal((await logger.recent(10)).length, 1);
     assert.equal((await logger.search('shell_command')).length, 1);
+  });
+});
+
+test('audit records promote remote machine and tool selectors to top-level fields', async () => {
+  await withRoot('machine-mcp-audit-routing-', async (root) => {
+    const logger = new AuditLogger(path.join(root, 'audit.ndjson'));
+    await logger.write({
+      traceId: 'trace-routing',
+      tool: 'machine_read',
+      policy: 'developer',
+      decision: 'allowed',
+      status: 'success',
+      durationMs: 12,
+      args: { machine: 'server', tool: 'git_status', arguments: { path: '.' } },
+    });
+
+    const [record] = await logger.recent(10) as Array<{ targetMachine?: string; remoteTool?: string; args?: Record<string, unknown> }>;
+    assert.equal(record.targetMachine, 'server');
+    assert.equal(record.remoteTool, 'git_status');
+    assert.ok(record.args);
   });
 });
 
