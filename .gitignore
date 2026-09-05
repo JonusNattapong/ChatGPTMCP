@@ -13,3 +13,5 @@ coverage/
 *.sqlite-wal
 *.sqlite-shm
 *.db
+tools/*.zip
+tools/tunnel-client-v*/
