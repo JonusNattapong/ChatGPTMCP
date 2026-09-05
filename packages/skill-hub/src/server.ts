@@ -29,7 +29,7 @@ export function createSkillHubServer(registry: SkillRegistry): McpServer {
   });
 
   server.registerTool('skill_search', {
-    description: 'Search skills by name and description. Use this before reading a skill when the exact skill name is unknown.',
+    description: 'Search skills by name and description. Use this for literal catalog lookup.',
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     inputSchema: z.object({
       query: z.string().min(1),
@@ -43,7 +43,7 @@ export function createSkillHubServer(registry: SkillRegistry): McpServer {
   });
 
   server.registerTool('skill_resolve', {
-    description: 'Recommend the most relevant skills for a natural-language task.',
+    description: 'Rank and deduplicate the most relevant skills for a natural-language task using taxonomy and local success telemetry.',
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     inputSchema: z.object({
       task: z.string().min(1),
@@ -53,6 +53,59 @@ export function createSkillHubServer(registry: SkillRegistry): McpServer {
     try {
       await registry.ensureReady();
       return text({ task, recommended: registry.resolve(task, limit) });
+    } catch (error) { return errorResult(error); }
+  });
+
+  server.registerTool('skill_route', {
+    description: 'Classify a task into skill families and return ranked, deduplicated skill candidates.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    inputSchema: z.object({
+      task: z.string().min(1),
+      limit: z.number().int().min(1).max(30).default(8)
+    })
+  }, async ({ task, limit }) => {
+    try {
+      await registry.ensureReady();
+      return text(registry.route(task, limit));
+    } catch (error) { return errorResult(error); }
+  });
+
+  server.registerTool('skill_compose', {
+    description: 'Compose an ordered 1-4 skill pipeline for a task, avoiding known duplicate/overlapping skill groups.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    inputSchema: z.object({
+      task: z.string().min(1),
+      max_skills: z.number().int().min(1).max(4).default(4)
+    })
+  }, async ({ task, max_skills }) => {
+    try {
+      await registry.ensureReady();
+      return text(registry.compose(task, max_skills));
+    } catch (error) { return errorResult(error); }
+  });
+
+  server.registerTool('skill_feedback', {
+    description: 'Record aggregate local outcome telemetry for skills. Stores counts only, not prompts or task content.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    inputSchema: z.object({
+      skills: z.array(z.string().min(1)).min(1).max(20),
+      outcome: z.enum(['success', 'partial', 'failure'])
+    })
+  }, async ({ skills, outcome }) => {
+    try {
+      await registry.ensureReady();
+      return text(await registry.feedback(skills, outcome));
+    } catch (error) { return errorResult(error); }
+  });
+
+  server.registerTool('skill_insights', {
+    description: 'Return skill taxonomy counts, known duplicate groups, core-skill coverage, and aggregate local success telemetry.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    inputSchema: z.object({})
+  }, async () => {
+    try {
+      await registry.ensureReady();
+      return text(registry.insights());
     } catch (error) { return errorResult(error); }
   });
 
@@ -80,7 +133,7 @@ export function createSkillHubServer(registry: SkillRegistry): McpServer {
   });
 
   server.registerTool('skill_stats', {
-    description: 'Return registry health, source root, count, and last sync time.',
+    description: 'Return registry health, source root, state root, count, and last sync time.',
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     inputSchema: z.object({})
   }, async () => {

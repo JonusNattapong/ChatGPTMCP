@@ -19,7 +19,7 @@ chatgpt-pilot/
 │   ├── skill-hub/        # Curated skills registry & execution gateway (@chatgpt-pilot/skill-hub)
 │   ├── mcp-server/       # Minimal MCP adapter (@chatgpt-pilot/mcp-server)
 │   └── core/             # Shared contracts & types (@chatgpt-pilot/core)
-├── skills/               # 139+ curated agent skills in markdown format
+├── skills/               # curated agent skills in markdown format (249 indexed in the current snapshot)
 ├── scripts/              # Platform tunnel and management scripts (.ps1, .sh)
 └── .pilot/               # Runtime local directory (audit.ndjson, config.json, memory/)
 ```
@@ -31,9 +31,9 @@ chatgpt-pilot/
 When interacting with this codebase, remember the 4 capability providers federated by `apps/server`:
 
 1. **System & Machine (`apps/server`)**: Low-level filesystem, background process orchestration, verified Git commits, and stateful Python (`toolpy`).
-2. **ThinkForge (`packages/thinkforge`)**: Structured cognitive accelerators (`think_diverge`, `think_challenge`, `think_reframe`, `think_converge`, `think_stress_test`).
-3. **Skill Hub (`packages/skill-hub`)**: Dynamic execution of 139+ curated agent skills in `skills/`.
-4. **Living Memory Book (`packages/memory`)**: Pure Markdown second brain indexed by Chapters, Subtopics, and Timesteps.
+2. **ThinkForge (`packages/thinkforge`)**: Structured cognitive accelerators such as `think_analyze_problem`, `think_reframe_problem`, `think_challenge_idea`, `think_synthesize_ideas`, and `think_experiment_design`.
+3. **Skill Hub (`packages/skill-hub`)**: Dynamic discovery, routing, composition, feedback, and on-demand reading across 249 currently indexed skills in `skills/`.
+4. **Living Memory Book (`packages/memory`)**: Pure Markdown second brain indexed by Chapters, Subtopics, Timesteps, and Memory Drawers.
 
 ---
 
