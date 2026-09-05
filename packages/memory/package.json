@@ -1,53 +1,24 @@
 {
   "name": "@chatgpt-pilot/memory",
-  "version": "0.1.0",
-  "description": "Persistent Second Brain MCP for durable cross-session AI memory, shared timelines, nightly consolidation, and provenance-aware dream recombination.",
+  "version": "1.0.0",
+  "description": "Markdown Living Memory Book (Brain Book) with Table of Contents, Timesteps, and Topic Recall",
   "type": "module",
+  "main": "dist/index.js",
   "bin": {
-    "ourbook-mcp": "dist/index.js"
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "engines": {
-    "node": ">=24"
-  },
-  "publishConfig": {
-    "access": "public"
+    "pilot-memory": "./dist/index.js",
+    "ourbook-mcp": "./dist/index.js"
   },
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
-    "start": "node dist/index.js",
-    "build": "bun build src/index.ts --target node --external better-sqlite3 --external sqlite-vec --external @xenova/transformers --external onnxruntime-node --outdir dist",
-    "test": "vitest run",
-    "typecheck": "bunx tsc --noEmit",
-    "verify": "bun run lint && bun run typecheck && bun run test && bun run build",
-    "prepack": "bun run build",
-    "prepublishOnly": "bun run verify",
-    "migrate": "drizzle-kit migrate",
-    "studio": "drizzle-kit studio",
-    "lint": "biome check .",
-    "format": "biome format --write ."
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.4",
-    "@modelcontextprotocol/sdk": "latest",
-    "@xenova/transformers": "latest",
-    "better-sqlite3": "latest",
-    "drizzle-orm": "latest",
-    "hono": "latest",
-    "sqlite-vec": "latest",
-    "ulid": "latest",
-    "zod": "latest"
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@biomejs/biome": "latest",
-    "@types/better-sqlite3": "latest",
-    "@types/node": "latest",
-    "bun-types": "^1.3.14",
-    "drizzle-kit": "latest",
-    "typescript": "latest",
-    "vitest": "latest"
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2"
   }
 }

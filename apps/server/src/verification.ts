@@ -234,7 +234,7 @@ async function gitValue(cwd: string, args: string[]) {
 }
 async function worktreeFingerprint(options: VerificationOptions, cwd: string) {
   const listed = await gitValue(cwd, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
-  const files = [...new Set(listed.split('\0').filter(Boolean))].filter(file => !file.startsWith('.chatgpt-machine/')).sort();
+  const files = [...new Set(listed.split('\0').filter(Boolean))].filter(file => !file.startsWith('.chatgpt-machine/') && !file.startsWith('.pilot/')).sort();
   if (files.length > 10000) throw new ToolError('TOO_LARGE', 'Verified commit fingerprint is limited to 10000 files.');
   const hash = createHash('sha256');
   let total = 0;

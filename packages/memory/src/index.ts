@@ -2,88 +2,167 @@
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import packageJson from '../package.json';
-import { runCli } from './cli';
-import { closeDatabase, runMigrations } from './db/client';
-import { startHttpServer } from './http/server';
-import { startConsolidationLoop } from './ourbook/loop';
-import { startLoop } from './self-improvement';
-import { registerBatchRememberTool } from './tools/batch-remember';
-import { registerConsolidateTool } from './tools/consolidate';
-import { registerDreamTool } from './tools/dream';
-import { registerExportImportTools } from './tools/export-import';
-import { registerFeedbackTool } from './tools/feedback';
-import { registerForgetTool } from './tools/forget';
-import { registerHandoffTool } from './tools/handoff';
-import { registerRecallTool } from './tools/recall';
-import { registerReflectTool } from './tools/reflect';
-import { registerReflectSessionTool } from './tools/reflect-session';
-import { registerRememberTool } from './tools/remember';
-import { registerSelfImproveTool } from './tools/self-improve';
-import { registerStatsTool } from './tools/stats';
-import { registerSupersedeTool } from './tools/supersede';
-import { registerTimelineTool } from './tools/timeline';
-import { registerTreeTool } from './tools/tree';
-import { registerUpdateTool } from './tools/update';
-import { registerWorkingTool } from './tools/working';
+import { z } from 'zod';
+import { BrainBook } from './book.js';
+
+export const book = new BrainBook();
 
 export const server = new McpServer({
-  name: 'ourbook-mcp',
-  version: packageJson.version,
+  name: 'chatgpt-pilot-memory',
+  version: '1.0.0',
 });
 
-export function createServer() {
-  registerRememberTool(server);
-  registerRecallTool(server);
-  registerConsolidateTool(server);
-  registerDreamTool(server);
-  registerSelfImproveTool(server);
-  registerForgetTool(server);
-  registerHandoffTool(server);
-  registerReflectTool(server);
-  registerReflectSessionTool(server);
-  registerUpdateTool(server);
-  registerSupersedeTool(server);
-  registerStatsTool(server);
-  registerTreeTool(server);
-  registerBatchRememberTool(server);
-  registerExportImportTools(server);
-  registerWorkingTool(server);
-  registerFeedbackTool(server);
-  registerTimelineTool(server);
-  return server;
-}
-
-async function main() {
-  createServer();
-  runMigrations();
-
-  if (process.env.OURBOOK_MEMORY_HTTP === '1') {
-    await startHttpServer();
+// 1. Table of Contents (สารบัญ)
+server.tool(
+  'memory_toc',
+  'Retrieve the Master Table of Contents (TOC/สารบัญ) of the living memory book. Lists all chapters, subtopics, and chronological timesteps.',
+  {
+    filter: z.string().optional().describe('Optional filter for a specific chapter name, keyword, or section'),
+  },
+  async ({ filter }) => {
+    const text = book.getTOC(filter);
+    return {
+      content: [{ type: 'text', text }],
+    };
   }
+);
 
-  if (process.env.OURBOOK_MEMORY_SELF_IMPROVE === '1') {
-    const interval = Number(process.env.OURBOOK_MEMORY_IMPROVE_INTERVAL) || 30 * 60 * 1000;
-    startLoop(interval);
-    console.error(`ourbook-mcp self-improvement loop started (interval: ${interval}ms)`);
+// 2. Executive Summary (สรุปเนื้อหา)
+server.tool(
+  'memory_summary',
+  'Retrieve high-level executive summary of the living memory book or a specific chapter.',
+  {
+    topic: z.string().optional().describe('Optional chapter or topic name to summarize'),
+  },
+  async ({ topic }) => {
+    const text = book.getSummary(topic);
+    return {
+      content: [{ type: 'text', text }],
+    };
   }
+);
 
-  if (process.env.OURBOOK_NIGHTLY_CONSOLIDATION !== '0') {
-    const localHour = Number(process.env.OURBOOK_CONSOLIDATION_HOUR ?? 2);
-    const checkIntervalMs =
-      Number(process.env.OURBOOK_CONSOLIDATION_CHECK_INTERVAL) || 60 * 60 * 1000;
-    startConsolidationLoop({ localHour, checkIntervalMs });
-    console.error(
-      `ourbook-mcp nightly consolidation enabled (local hour: ${localHour}, check interval: ${checkIntervalMs}ms)`,
-    );
+// 3. Read Topic / Chapter / Subtopic (อ่านเนื้อหาตามหัวข้อหลักและหัวข้อย่อย)
+server.tool(
+  'memory_read_topic',
+  'Read a chapter, topic, or specific subtopic (หัวข้อย่อย) from the living memory book.',
+  {
+    topic: z.string().describe('Chapter or topic name (e.g. 01-identity, projects, architecture, timeline, or filename)'),
+    subtopic: z.string().optional().describe('Specific heading or subtopic to extract (e.g. Active Workspaces, Tooling, Milestones)'),
+  },
+  async ({ topic, subtopic }) => {
+    const text = book.readTopic(topic, subtopic);
+    return {
+      content: [{ type: 'text', text }],
+    };
   }
+);
 
+// 4. Temporal Recall / Timestep (เรียกดูความจำตามช่วงเวลา)
+server.tool(
+  'memory_recall_time',
+  'Recall memory entries indexed by chronological timestep (e.g. "latest", "2026-09-05", "2026-08", "September 2026").',
+  {
+    timestep: z.string().describe('Date, month, or "latest" to inspect recent timeline logs'),
+  },
+  async ({ timestep }) => {
+    const text = book.recallTime(timestep);
+    return {
+      content: [{ type: 'text', text }],
+    };
+  }
+);
+
+// 5. Full-Text Search (ค้นหาความจำ)
+server.tool(
+  'memory_search',
+  'Search across all chapters, subtopics, and timesteps in the living memory book.',
+  {
+    query: z.string().describe('Search query or keywords'),
+    limit: z.number().optional().describe('Maximum number of results to return (default: 5)'),
+  },
+  async ({ query, limit }) => {
+    const results = book.search(query, limit ?? 5);
+    const text =
+      results.length > 0
+        ? results
+            .map(
+              (r, idx) =>
+                `### ${idx + 1}. ${r.title} (\`${r.file}\`)\n> ${r.snippet}`
+            )
+            .join('\n\n')
+        : `No matching memory entries found for query: "${query}"`;
+    return {
+      content: [{ type: 'text', text }],
+    };
+  }
+);
+
+// 6. Remember / Record Entry (บันทึกความจำใหม่)
+server.tool(
+  'memory_remember',
+  'Record a new memory, milestone, architecture note, or decision into the living memory book. Automatically updates the timeline and rebuilds the Table of Contents.',
+  {
+    title: z.string().describe('Title or brief summary of the memory entry'),
+    content: z.string().describe('Detailed content of the memory entry (markdown supported)'),
+    chapter: z.string().optional().describe('Optional chapter to append this note to (e.g. 02-projects, 03-architecture)'),
+    timestep: z.string().optional().describe('Optional specific date (YYYY-MM-DD), defaults to today'),
+    tags: z.array(z.string()).optional().describe('Optional tags for indexing'),
+  },
+  async ({ title, content, chapter, timestep, tags }) => {
+    const result = book.remember({ title, content, chapter, timestep, tags });
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+// 7. Memory Statistics
+server.tool(
+  'memory_stats',
+  'Get statistics about the living memory store (chapter count, timesteps, word count, disk size, storage location).',
+  {},
+  async () => {
+    const stats = book.stats();
+    return {
+      content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }],
+    };
+  }
+);
+
+// Unified Recall tool: memory_recall
+server.tool(
+  'memory_recall',
+  'Recall memory entries by query, chapter topic, or timestep.',
+  {
+    query: z.string().describe('Search query, keyword, or subtopic'),
+    topic: z.string().optional().describe('Optional chapter topic filter'),
+    timestep: z.string().optional().describe('Optional timestep query'),
+  },
+  async ({ query, topic, timestep }) => {
+    if (timestep) {
+      const text = book.recallTime(timestep);
+      return { content: [{ type: 'text', text }] };
+    }
+    if (topic) {
+      const text = book.readTopic(topic, query);
+      return { content: [{ type: 'text', text }] };
+    }
+    const results = book.search(query, 5);
+    const text =
+      results.length > 0
+        ? results.map((r) => `### ${r.title} (\`${r.file}\`)\n${r.snippet}`).join('\n\n')
+        : book.readTopic(query);
+    return { content: [{ type: 'text', text }] };
+  }
+);
+
+async function startStdioServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('ourbook-mcp MCP server running on stdio');
+  console.error('[chatgpt-pilot-memory] Markdown Living Memory Book MCP server running on stdio');
 }
 
 function isMainModule() {
@@ -94,18 +173,26 @@ function isMainModule() {
 if (isMainModule()) {
   const command = process.argv[2];
 
-  if (command && command !== 'mcp') {
-    runCli(process.argv.slice(2)).catch((error) => {
-      console.error('Fatal ourbook-mcp CLI error:', error);
-      closeDatabase();
+  if (!command || command === 'mcp') {
+    startStdioServer().catch((error) => {
+      console.error('[chatgpt-pilot-memory] Fatal startup error:', error);
       process.exit(1);
     });
+  } else if (command === 'toc') {
+    console.log(book.getTOC(process.argv[3]));
+  } else if (command === 'summary') {
+    console.log(book.getSummary(process.argv[3]));
+  } else if (command === 'read') {
+    console.log(book.readTopic(process.argv[3] || '01-identity', process.argv[4]));
+  } else if (command === 'time') {
+    console.log(book.recallTime(process.argv[3] || 'latest'));
+  } else if (command === 'search') {
+    console.log(JSON.stringify(book.search(process.argv[3] || '', 10), null, 2));
+  } else if (command === 'stats') {
+    console.log(JSON.stringify(book.stats(), null, 2));
   } else {
-    main().catch((error) => {
-      console.error('Fatal ourbook-mcp startup error:', error);
-      closeDatabase();
-      process.exit(1);
-    });
+    console.log(`Unknown command: ${command}`);
+    console.log(`Usage: pilot-memory [mcp | toc | summary | read | time | search | stats]`);
   }
 }
 

@@ -299,8 +299,8 @@ async function buildRuntime(
     if (!readable) {
       throw new ToolError(
         'DEPENDENCY_MISSING',
-        `OurBook build output was not found: ${entry}`,
-        'Run bun run build in the OurBook repository, or remove --memory-dir.',
+        `Memory build output was not found: ${entry}`,
+        'Run pnpm build in packages/memory, or remove --memory-dir.',
       );
     }
 
@@ -311,23 +311,21 @@ async function buildRuntime(
       command: process.execPath,
       args: [entry, 'mcp'],
       cwd: options.memoryDir,
-      env: {
-        ...childEnv,
-        OURBOOK_NIGHTLY_CONSOLIDATION: '0',
-        OURBOOK_MEMORY_SELF_IMPROVE: '0',
-      },
+      env: childEnv,
       timeoutMs: Math.min(options.maxTimeoutMs, 30_000),
-      clientName: 'chatgpt-machine-mcp-memory-provider',
+      clientName: 'chatgpt-pilot-mcp-memory-provider',
       clientVersion: APP_VERSION,
     });
     try {
       const provider = await createRemoteMcpProvider({
         id: 'memory',
         adapter,
-        includeTools: ['ourbook_recall', 'ourbook_remember', 'ourbook_stats'],
-        publicName: (_providerId, remoteToolName) => remoteToolName.startsWith('ourbook_')
-          ? `memory_${remoteToolName.slice('ourbook_'.length)}`
-          : `memory_${remoteToolName}`,
+        publicName: (_providerId, remoteToolName) =>
+          remoteToolName.startsWith('memory_')
+            ? remoteToolName
+            : remoteToolName.startsWith('ourbook_')
+              ? `memory_${remoteToolName.slice('ourbook_'.length)}`
+              : `memory_${remoteToolName}`,
       });
       capabilityProviders.push(provider);
       closeProviders.push(() => adapter.close());
