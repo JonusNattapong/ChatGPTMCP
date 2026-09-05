@@ -24,6 +24,7 @@ import {
 } from './file-tools.js';
 import { applyFilePatch, runShellCommand, type MachineAccess, type ShellKind } from './shell-tools.js';
 import {
+  execProcess,
   listManagedProcesses,
   processStatus,
   readProcessOutput,
@@ -40,6 +41,8 @@ import {
   gitDiff,
   gitLog,
   gitPush,
+  gitPublishPaths,
+  gitRemoteStatus,
   gitShow,
   gitStatus,
 } from './git-tools.js';
@@ -836,6 +839,37 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       },
     },
     {
+      name: 'exec_process',
+      description: 'Execute one binary with an explicit argv vector, without shell parsing or quoting. Prefer this over shell_command for scripts, Git helpers, and structured command invocation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          executable: { type: 'string', description: 'Executable name or path.' },
+          args: { type: 'array', maxItems: 256, items: { type: 'string' }, description: 'Argument vector passed directly to the executable.' },
+          workdir: { type: 'string', description: 'Working directory; defaults to the workspace.' },
+          env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Environment variables merged over the server environment.' },
+          stdin: { type: 'string', description: 'UTF-8 text written to stdin before it is closed.' },
+          timeout_ms: { type: 'integer', minimum: 100, maximum: context.maxTimeoutMs },
+          max_output_bytes: { type: 'integer', minimum: 1024, maximum: 4194304 },
+          expect_exit_code: { type: 'integer', description: 'Optional expected exit code.' },
+        },
+        required: ['executable'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      handler: async (args) => execProcess({
+        ...access,
+        executable: requireString(args, 'executable'),
+        args: optionalStringArray(args, 'args'),
+        workdir: optionalString(args, 'workdir'),
+        env: optionalStringRecord(args, 'env'),
+        stdin: optionalString(args, 'stdin'),
+        timeoutMs: optionalInteger(args, 'timeout_ms'),
+        maxTimeoutMs: context.maxTimeoutMs,
+        maxOutputBytes: optionalInteger(args, 'max_output_bytes'),
+        expectExitCode: optionalInteger(args, 'expect_exit_code'),
+      }),
+    },
+    {
       name: 'start_process',
       description: open
         ? 'Start a background PowerShell, cmd, or Bash process anywhere on this machine and return its PID. Poll it with read_process_output.'
@@ -1005,6 +1039,27 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       handler: async (args) => gitStatus({ ...access, path: optionalString(args, 'path') }),
     },
     {
+      name: 'git_remote_status',
+      description: 'Read local-vs-remote branch state using structured Git commands. Set refresh=true to fetch the selected branch first so ahead/behind is based on current remote state.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          remote: { type: 'string', description: 'Remote name; defaults to origin.' },
+          branch: { type: 'string', description: 'Branch; defaults to the current branch.' },
+          refresh: { type: 'boolean', description: 'Fetch remote/branch before computing ahead/behind.' },
+        },
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      handler: async (args) => gitRemoteStatus({
+        ...access,
+        path: optionalString(args, 'path'),
+        remote: optionalString(args, 'remote'),
+        branch: optionalString(args, 'branch'),
+        refresh: optionalBoolean(args, 'refresh'),
+      }),
+    },
+    {
       name: 'git_diff',
       description: 'Read the Git working-tree or staged diff without running a shell command, optionally limited to specific paths.',
       inputSchema: {
@@ -1156,6 +1211,42 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       handler: async (args) => gitPush({ ...access, path: optionalString(args, 'path'), remote: optionalString(args, 'remote'), branch: optionalString(args, 'branch'), setUpstream: optionalBoolean(args, 'set_upstream') }),
     },
+    {
+      name: 'git_publish_paths',
+      description: 'Safely publish only selected files. Fetches the remote branch, refuses selected-path drift, copies only those files into an isolated temporary worktree rooted at the remote tip, optionally verifies there, commits, then pushes without changing the caller worktree/index/branch.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Git repository directory; defaults to the workspace.' },
+          paths: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' }, description: 'Repository-relative files to publish.' },
+          message: { type: 'string', description: 'Commit message for the isolated publish commit.' },
+          remote: { type: 'string', description: 'Remote name; defaults to origin.' },
+          branch: { type: 'string', description: 'Branch; defaults to the current branch.' },
+          verify_profile: { type: 'string', enum: ['fast', 'normal', 'strict'], description: 'Optional project verification profile to run inside the isolated worktree before commit/push.' },
+          verify_timeout_ms: { type: 'integer', minimum: 1000, maximum: context.maxTimeoutMs, description: 'Verification timeout when verify_profile is supplied.' },
+        },
+        required: ['paths', 'message'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+      handler: async (args) => {
+        const profile = optionalVerificationProfile({ profile: args.verify_profile });
+        return gitPublishPaths({
+          ...access,
+          path: optionalString(args, 'path'),
+          paths: optionalStringArray(args, 'paths') ?? [],
+          message: requireString(args, 'message'),
+          remote: optionalString(args, 'remote'),
+          branch: optionalString(args, 'branch'),
+          verify: profile ? async (isolatedWorktree) => verifyChanges({
+            ...access,
+            root: isolatedWorktree,
+            path: isolatedWorktree,
+            profile,
+            timeoutMs: optionalInteger(args, 'verify_timeout_ms') ?? context.maxTimeoutMs,
+          }) : undefined,
+        });
+      },
+    },
   ];
 
   if (context.osintEnabled) {
@@ -1256,7 +1347,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           throw new ToolError(
             'UNKNOWN_TOOL',
             `Unknown runtime capability: ${name}.`,
-            'Call runtime_exec with code="result(await describe())" to inspect the default read-only catalog, or use the normal MCP tool list outside runtime-only mode.',
+            'Call runtime_exec with code="result(await describe())" to inspect capability schemas and their authorized flag, or use the normal MCP tool list outside runtime-only mode.',
           );
         }
       }
@@ -1291,7 +1382,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           const startedAt = Date.now();
           try {
             const result = await nestedSpec.handler(nestedArgs, { approvalGranted: execution?.approvalGranted });
-            const failed = name === 'shell_command'
+            const failed = (name === 'shell_command' || name === 'exec_process')
               && (result as { promotedToBackground?: boolean }).promotedToBackground !== true
               && ((result as { success?: boolean }).success === false
                 || (result as { expectationMet?: boolean }).expectationMet === false

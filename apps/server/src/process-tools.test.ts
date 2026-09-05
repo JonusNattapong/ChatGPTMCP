@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { listManagedProcesses, processStatus, readProcessOutput, startProcess, stopProcess, waitProcess, writeProcessInput } from './process-tools.js';
+import { execProcess, listManagedProcesses, processStatus, readProcessOutput, startProcess, stopProcess, waitProcess, writeProcessInput } from './process-tools.js';
 
 async function withRoot(prefix: string, body: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), prefix));
@@ -15,6 +15,32 @@ async function withRoot(prefix: string, body: (root: string) => Promise<void>): 
 }
 
 // C: process cleanup & lifecycle invariants
+
+test('execProcess preserves argv boundaries and UTF-8 without shell interpolation', async () => {
+  await withRoot('machine-mcp-exec-argv-', async (root) => {
+    const marker = 'a b "quoted" ไทย 🚀';
+    const result = await execProcess({
+      root,
+      unrestricted: false,
+      executable: process.execPath,
+      args: ['-e', 'process.stdout.write(process.argv[1])', marker],
+      timeoutMs: 5_000,
+      maxOutputBytes: 16_384,
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.success, true);
+    assert.equal(result.stdout, marker);
+  });
+});
+
+test('execProcess reports missing executables without invoking a shell', async () => {
+  await withRoot('machine-mcp-exec-missing-', async (root) => {
+    await assert.rejects(
+      () => execProcess({ root, unrestricted: false, executable: '__definitely_missing_chatgpt_binary__', timeoutMs: 1_000 }),
+      /Executable was not found/,
+    );
+  });
+});
 
 test('startProcess returns explicit PID and durable metadata', async () => {
   await withRoot('machine-mcp-proc-pid-', async (root) => {

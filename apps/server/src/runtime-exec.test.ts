@@ -92,10 +92,10 @@ kernelTest('persistent IPython keeps variables, imports, and generated helpers a
   });
 });
 
-kernelTest('persistent IPython describe exposes only capabilities declared for the current execution', async () => {
+kernelTest('persistent IPython describe exposes schemas independently from execution authorization', async () => {
   await withRuntime(async (runtime) => {
     const result = await runtime.execute({
-      code: "catalog = await describe(); result([item['name'] for item in catalog])",
+      code: "catalog = await describe(); result([(item['name'], item['authorized']) for item in catalog])",
       sessionId: 'catalog',
       timeoutMs: 10_000,
       maxCalls: 4,
@@ -104,8 +104,28 @@ kernelTest('persistent IPython describe exposes only capabilities declared for t
       allowedTools: new Set(['read_file']),
       invoke,
     });
-    assert.deepEqual(result.result, ['read_file']);
+    assert.deepEqual(result.result, [['read_file', true], ['write_file', false]]);
     assert.equal(result.calls.length, 0);
+  });
+});
+
+kernelTest('persistent IPython preserves Unicode and omits empty duplicate output fields', async () => {
+  await withRuntime(async (runtime) => {
+    const output = await runtime.execute({
+      code: "result({'thai': 'สวัสดี', 'emoji': '🚀', 'mixed': 'ไทย-UTF8-✅'})",
+      sessionId: 'unicode',
+      timeoutMs: 10_000,
+      maxCalls: 2,
+      maxOutputBytes: 128 * 1024,
+      capabilities,
+      allowedTools: new Set(['read_file']),
+      invoke,
+    });
+    assert.deepEqual(output.result, { thai: 'สวัสดี', emoji: '🚀', mixed: 'ไทย-UTF8-✅' });
+    assert.equal('stdout' in output, false);
+    assert.equal('stderr' in output, false);
+    assert.equal('displays' in output, false);
+    assert.equal('outputTruncated' in output, false);
   });
 });
 

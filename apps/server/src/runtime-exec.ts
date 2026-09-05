@@ -40,10 +40,10 @@ export interface RuntimeExecResult {
   python: string;
   executionCount: number;
   result: unknown;
-  stdout: string;
-  stderr: string;
-  displays: Array<{ type: 'execute_result' | 'display_data'; text?: string }>;
-  outputTruncated: boolean;
+  stdout?: string;
+  stderr?: string;
+  displays?: Array<{ type: 'execute_result' | 'display_data'; text?: string }>;
+  outputTruncated?: true;
   calls: RuntimeCallSummary[];
   usage: {
     calls: number;
@@ -148,7 +148,10 @@ def _json_safe(value, depth=0, seen=None):
 
 
 def _send(value):
-    line = json.dumps(_json_safe(value), ensure_ascii=False, separators=(',', ':'))
+    # Keep the line protocol ASCII-only. This makes the parent/child boundary
+    # independent from the Windows active code page while preserving Unicode
+    # losslessly through JSON escapes.
+    line = json.dumps(_json_safe(value), ensure_ascii=True, separators=(',', ':'))
     with _write_lock:
         sys.stdout.write(line + '\n')
         sys.stdout.flush()
@@ -336,11 +339,13 @@ class _ChatGPTTools:
 
 def result(value):
     globals()['__chatgpt_result__'] = value
-    return value
+    # Do not echo the structured result through IPython's execute_result
+    # channel. The value is returned separately through user_expressions.
+    return None
 
 
 def _chatgpt_result_json():
-    return _chatgpt_json.dumps(_chatgpt_json_safe(globals().get('__chatgpt_result__')), ensure_ascii=False)
+    return _chatgpt_json.dumps(_chatgpt_json_safe(globals().get('__chatgpt_result__')), ensure_ascii=True)
 
 
 tools = _ChatGPTTools()
@@ -609,7 +614,12 @@ export class PersistentIpythonRuntime {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       detached: process.platform !== 'win32',
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
+      },
     });
     this.allChildren.add(child);
     child.once('exit', () => {
@@ -741,24 +751,25 @@ export class PersistentIpythonRuntime {
       : [];
     const executionCount = typeof message.executionCount === 'number' ? message.executionCount : session.executionCount + 1;
     session.executionCount = Math.max(session.executionCount, executionCount);
-    active.resolve({
+    const response: RuntimeExecResult = {
       runtime: 'ipython',
       persistent: true,
       sessionId: session.id,
       python: session.python,
       executionCount,
       result: message.result,
-      stdout,
-      stderr,
-      displays,
-      outputTruncated: message.outputTruncated === true,
       calls: active.calls,
       usage: {
         calls: active.callCount,
         outputBytes: Buffer.byteLength(stdout, 'utf8') + Buffer.byteLength(stderr, 'utf8') + displays.reduce((sum, entry) => sum + Buffer.byteLength(entry.text ?? '', 'utf8'), 0),
         protocolBytes: active.protocolBytes,
       },
-    });
+    };
+    if (stdout) response.stdout = stdout;
+    if (stderr) response.stderr = stderr;
+    if (displays.length > 0) response.displays = displays;
+    if (message.outputTruncated === true) response.outputTruncated = true;
+    active.resolve(response);
   }
 
   private async handleBridgeRequest(session: RuntimeSession, message: Record<string, unknown>): Promise<void> {
@@ -768,12 +779,12 @@ export class PersistentIpythonRuntime {
     if (message.type === 'describe') {
       const requested = typeof message.name === 'string' ? message.name : undefined;
       const catalog = active.capabilities
-        .filter((capability) => active.allowedTools.has(capability.name))
         .map((capability) => ({
           name: capability.name,
           description: capability.description,
           inputSchema: capability.inputSchema,
           annotations: capability.annotations,
+          authorized: active.allowedTools.has(capability.name),
         }));
       const result = requested ? catalog.find((entry) => entry.name === requested) ?? null : catalog;
       this.send(session, { type: 'response', id, result });

@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -34,6 +34,8 @@ test('readonly policy denies mutations and developer policy approval-gates high-
     const shell = evaluatePolicy(developer, byName.get('shell_command')!, { command: 'npm test', workdir: root }, root);
     assert.equal(shell.allowed, true);
     assert.equal(shell.requiresApproval, true);
+    assert.equal(evaluatePolicy(developer, byName.get('exec_process')!, { executable: 'node', args: ['--version'] }, root).requiresApproval, true);
+    assert.equal(evaluatePolicy(developer, byName.get('git_publish_paths')!, { path: root, paths: ['README.md'], message: 'docs' }, root).requiresApproval, true);
     const routed = evaluatePolicy(developer, byName.get('machine_call')!, { machine: 'server', tool: 'read_file', arguments: { path: 'README.md' } }, root);
     assert.equal(routed.allowed, true);
     assert.equal(routed.requiresApproval, true);

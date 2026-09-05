@@ -22,6 +22,18 @@ export interface StartProcessOptions extends MachineAccess {
   env?: Record<string, string>;
 }
 
+export interface ExecProcessOptions extends MachineAccess {
+  executable: string;
+  args?: string[];
+  workdir?: string;
+  env?: Record<string, string>;
+  stdin?: string;
+  timeoutMs?: number;
+  maxTimeoutMs?: number;
+  maxOutputBytes?: number;
+  expectExitCode?: number;
+}
+
 export interface ProcessPidOptions extends MachineAccess {
   pid: number;
   processId?: string;
@@ -302,6 +314,113 @@ async function readLog(filePath: string): Promise<string> {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return '';
     throw error;
   }
+}
+
+async function terminateDirectProcess(child: ChildProcess): Promise<void> {
+  if (!child.pid) {
+    child.kill();
+    return;
+  }
+  if (process.platform === 'win32') {
+    await new Promise<void>((resolve) => {
+      const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      killer.once('error', () => { child.kill(); resolve(); });
+      killer.once('close', () => resolve());
+    });
+    return;
+  }
+  try { process.kill(-child.pid, 'SIGKILL'); }
+  catch { child.kill('SIGKILL'); }
+}
+
+/** Execute one binary with an argv vector. No shell parser or quoting layer is involved. */
+export async function execProcess(options: ExecProcessOptions) {
+  if (!options.executable.trim()) throw new ToolError('INVALID_ARGUMENT', '"executable" must be a non-empty string.');
+  const args = options.args ?? [];
+  if (!Array.isArray(args) || args.length > 256 || args.some((arg) => typeof arg !== 'string')) {
+    throw new ToolError('INVALID_ARGUMENT', '"args" must be an array of at most 256 strings.');
+  }
+  const maxTimeoutMs = options.maxTimeoutMs ?? 10 * 60_000;
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > maxTimeoutMs) {
+    throw new ToolError('INVALID_ARGUMENT', `"timeout_ms" must be an integer between 100 and ${maxTimeoutMs}.`);
+  }
+  const maxOutputBytes = options.maxOutputBytes ?? 1024 * 1024;
+  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > MAX_CAPTURE_BYTES) {
+    throw new ToolError('INVALID_ARGUMENT', `"max_output_bytes" must be an integer between 1024 and ${MAX_CAPTURE_BYTES}.`);
+  }
+  if (options.expectExitCode !== undefined && !Number.isInteger(options.expectExitCode)) {
+    throw new ToolError('INVALID_ARGUMENT', '"expect_exit_code" must be an integer.');
+  }
+
+  const workdir = await resolveMachinePath(options, options.workdir ?? '.', true);
+  const startedAt = Date.now();
+  const child = spawn(options.executable, args, {
+    cwd: workdir,
+    env: options.env ? { ...process.env, ...options.env } : process.env,
+    windowsHide: true,
+    detached: process.platform !== 'win32',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    shell: false,
+  });
+  const stdoutDecoder = new StringDecoder('utf8');
+  const stderrDecoder = new StringDecoder('utf8');
+  let stdout = '';
+  let stderr = '';
+  let capturedBytes = 0;
+  let outputTruncated = false;
+  let timedOut = false;
+  let spawnError: Error | undefined;
+
+  const append = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
+    const remaining = Math.max(0, maxOutputBytes - capturedBytes);
+    const accepted = chunk.subarray(0, remaining);
+    capturedBytes += accepted.length;
+    if (accepted.length < chunk.length) outputTruncated = true;
+    if (!accepted.length) return;
+    if (stream === 'stdout') stdout += stdoutDecoder.write(accepted);
+    else stderr += stderrDecoder.write(accepted);
+  };
+  child.stdout?.on('data', (chunk: Buffer) => append('stdout', chunk));
+  child.stderr?.on('data', (chunk: Buffer) => append('stderr', chunk));
+  child.once('error', (error) => { spawnError = error; });
+
+  if (options.stdin !== undefined) child.stdin?.end(options.stdin, 'utf8');
+  else child.stdin?.end();
+
+  const close = new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once('close', (exitCode, signal) => resolve({ exitCode, signal }));
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    void terminateDirectProcess(child);
+  }, timeoutMs);
+  const { exitCode, signal } = await close;
+  clearTimeout(timer);
+  stdout += stdoutDecoder.end();
+  stderr += stderrDecoder.end();
+  if (spawnError) {
+    const code = (spawnError as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') throw new ToolError('DEPENDENCY_MISSING', `Executable was not found: ${options.executable}`);
+    throw new ToolError('INTERNAL', spawnError.message);
+  }
+  const expectedExitCode = options.expectExitCode;
+  return {
+    executable: options.executable,
+    args,
+    workdir,
+    exitCode,
+    signal,
+    success: !timedOut && exitCode === (expectedExitCode ?? 0),
+    timedOut,
+    outputTruncated,
+    stdout,
+    stderr,
+    stdoutBytes: Buffer.byteLength(stdout, 'utf8'),
+    stderrBytes: Buffer.byteLength(stderr, 'utf8'),
+    durationMs: Date.now() - startedAt,
+    ...(expectedExitCode === undefined ? {} : { expectedExitCode, expectationMet: exitCode === expectedExitCode }),
+  };
 }
 
 export async function startProcess(options: StartProcessOptions) {

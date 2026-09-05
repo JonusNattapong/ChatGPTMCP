@@ -1,4 +1,4 @@
-﻿import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { APP_VERSION } from './version.js';
 

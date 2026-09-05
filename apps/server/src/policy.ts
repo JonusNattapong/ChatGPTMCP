@@ -1,4 +1,4 @@
-﻿import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ToolSpec } from './tools.js';
@@ -71,6 +71,7 @@ const BUILTIN: Record<PolicyProfileName, PolicyConfig> = {
       deny: [],
       approvalRequired: [
         'shell_command',
+        'exec_process',
         'start_process',
         'process_write',
         'stop_process',
@@ -80,6 +81,7 @@ const BUILTIN: Record<PolicyProfileName, PolicyConfig> = {
         'git_commit_verified',
         'git_checkout',
         'git_push',
+        'git_publish_paths',
         'machine_call',
         'save_image_from_url',
       ],
