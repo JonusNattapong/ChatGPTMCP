@@ -1,0 +1,132 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { parseFrontmatter } from './frontmatter.js';
+
+export interface SkillSummary {
+  name: string;
+  description: string;
+  directory: string;
+  license?: string;
+  version?: string;
+  author?: string;
+}
+
+export interface SkillSearchResult extends SkillSummary {
+  score: number;
+}
+
+const MAX_SKILL_BYTES = 512 * 1024;
+const MAX_READ_BYTES = 256 * 1024;
+const ALLOWED_TEXT_EXTENSIONS = new Set(['.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.sh', '.ps1']);
+
+function tokenize(value: string): string[] {
+  return [...new Set(value.toLowerCase().split(/[^a-z0-9_-]+/i).filter(Boolean))];
+}
+
+function scoreSkill(skill: SkillSummary, query: string): number {
+  const q = query.trim().toLowerCase();
+  if (!q) return 0;
+  const name = skill.name.toLowerCase();
+  const description = skill.description.toLowerCase();
+  let score = 0;
+  if (name === q) score += 100;
+  if (name.startsWith(q)) score += 45;
+  if (name.includes(q)) score += 30;
+  if (description.includes(q)) score += 18;
+
+  for (const token of tokenize(q)) {
+    if (name === token) score += 25;
+    else if (name.includes(token)) score += 14;
+    if (description.includes(token)) score += 6;
+  }
+  return score;
+}
+
+export class SkillRegistry {
+  private skills = new Map<string, SkillSummary>();
+  private lastSyncedAt?: string;
+
+  constructor(readonly root: string) {}
+
+  async sync(): Promise<{ count: number; root: string; syncedAt: string }> {
+    const rootStat = await fs.stat(this.root).catch(() => undefined);
+    if (!rootStat?.isDirectory()) throw new Error(`Skills root does not exist or is not a directory: ${this.root}`);
+
+    const entries = await fs.readdir(this.root, { withFileTypes: true });
+    const next = new Map<string, SkillSummary>();
+
+    await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+      const skillPath = path.join(this.root, entry.name);
+      const skillFile = path.join(skillPath, 'SKILL.md');
+      const stat = await fs.stat(skillFile).catch(() => undefined);
+      if (!stat?.isFile() || stat.size > MAX_SKILL_BYTES) return;
+      const markdown = await fs.readFile(skillFile, 'utf8');
+      const meta = parseFrontmatter(markdown);
+      const name = meta.name?.trim() || entry.name;
+      const description = meta.description?.trim() || '';
+      next.set(name.toLowerCase(), {
+        name,
+        description,
+        directory: entry.name,
+        ...(meta.license ? { license: meta.license } : {}),
+        ...(meta.version ? { version: meta.version } : {}),
+        ...(meta.author ? { author: meta.author } : {})
+      });
+    }));
+
+    this.skills = next;
+    this.lastSyncedAt = new Date().toISOString();
+    return { count: this.skills.size, root: this.root, syncedAt: this.lastSyncedAt };
+  }
+
+  async ensureReady(): Promise<void> {
+    if (!this.lastSyncedAt) await this.sync();
+  }
+
+  list(offset = 0, limit = 50): SkillSummary[] {
+    return [...this.skills.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(offset, offset + limit);
+  }
+
+  get(name: string): SkillSummary | undefined {
+    return this.skills.get(name.toLowerCase());
+  }
+
+  search(query: string, limit = 10): SkillSearchResult[] {
+    return [...this.skills.values()]
+      .map((skill) => ({ ...skill, score: scoreSkill(skill, query) }))
+      .filter((skill) => skill.score > 0)
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, limit);
+  }
+
+  resolve(task: string, limit = 5): SkillSearchResult[] {
+    return this.search(task, limit);
+  }
+
+  stats(): { count: number; root: string; lastSyncedAt?: string } {
+    return { count: this.skills.size, root: this.root, ...(this.lastSyncedAt ? { lastSyncedAt: this.lastSyncedAt } : {}) };
+  }
+
+  async read(name: string, relativePath = 'SKILL.md'): Promise<{ skill: SkillSummary; path: string; content: string }> {
+    const skill = this.get(name);
+    if (!skill) throw new Error(`Unknown skill: ${name}`);
+    if (path.isAbsolute(relativePath)) throw new Error('Skill file path must be relative');
+
+    const skillDir = await fs.realpath(path.join(this.root, skill.directory));
+    const candidate = path.resolve(skillDir, relativePath);
+    const real = await fs.realpath(candidate).catch(() => undefined);
+    if (!real) throw new Error(`Skill file not found: ${relativePath}`);
+    const prefix = skillDir.endsWith(path.sep) ? skillDir : `${skillDir}${path.sep}`;
+    if (real !== skillDir && !real.startsWith(prefix)) throw new Error('Refusing to read outside the selected skill directory');
+
+    const stat = await fs.stat(real);
+    if (!stat.isFile()) throw new Error('Requested skill path is not a file');
+    if (stat.size > MAX_READ_BYTES) throw new Error(`Skill file exceeds ${MAX_READ_BYTES} bytes`);
+    const ext = path.extname(real).toLowerCase();
+    if (!ALLOWED_TEXT_EXTENSIONS.has(ext)) throw new Error(`Unsupported skill file type: ${ext || '(none)'}`);
+
+    return { skill, path: path.relative(skillDir, real).replaceAll('\\', '/'), content: await fs.readFile(real, 'utf8') };
+  }
+}

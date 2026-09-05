@@ -1,233 +1,69 @@
-<p align="center">
-  <img src="docs/assets/machine-mcp-logo.svg" alt="ChatGPT Machine MCP" width="760" />
-</p>
+# ChatGPT Pilot (`chatgpt-pilot`)
 
-# ChatGPT Machine MCP
+All-in-one local MCP workstation & bridge for ChatGPT and Codex, consolidating runtime capabilities into four key pillars:
 
-**English** | [ไทย](README.th.md)
+- 💻 **Coding & System** (`apps/server`) — Filesystem, processes, Git, verification, policy governance, and persistent Python runtime (`toolpy`).
+- 🧠 **Think** (`packages/thinkforge`) — Reasoning accelerators, problem-reframing, and divergence tools.
+- 📚 **Skills** (`packages/skill-hub` + `skills/`) — Dynamic registry and runner with 110+ curated agent skills.
+- 💾 **Memory** (`packages/memory`) — Persistent Second Brain with SQLite/vector cross-session recall and provenance.
 
-Use ChatGPT Web with a trusted local Windows machine through OpenAI Secure MCP Tunnel.
+---
 
-This README is the installation guide. For tools, architecture, transport, security, and contributor details, see the **[technical guide](https://jonusnattapong.github.io/ChatGPTMCP/)**.
-
-## What you need
-
-- Windows 10/11 or macOS (Apple Silicon / Intel)
-- Node.js 20 or newer
-- Git
-- GitHub CLI (`gh`)
-- A ChatGPT account that can use custom MCP apps/connectors
-- An OpenAI Platform organization that can create Secure MCP Tunnels
-
-## Setup
-
-### 1. Clone and verify
-
-```powershell
-Set-Location D:\Projects\Github
-gh repo clone JonusNattapong/ChatGPTMCP
-Set-Location D:\Projects\Github\ChatGPTMCP
-npm install
-npm test
-```
-
-### 2. Download `tunnel-client`
-
-The binary is deliberately not stored in Git.
-
-```powershell
-New-Item -ItemType Directory -Force tools\tunnel-client-v0.0.13 | Out-Null
-gh release download v0.0.13 --repo openai/tunnel-client --pattern tunnel-client-v0.0.13-windows-amd64.zip --dir tools
-Expand-Archive -LiteralPath tools\tunnel-client-v0.0.13-windows-amd64.zip -DestinationPath tools\tunnel-client-v0.0.13 -Force
-Test-Path tools\tunnel-client-v0.0.13\tunnel-client.exe
-```
-
-![Download tunnel-client](docs/tunnel-client-release-annotated.png)
-
-### 3. Create a tunnel
-
-Open OpenAI Platform → Organization settings → **Tunnels** → **Create tunnel**. Give it a name such as `ChatGPT Machine MCP`.
-
-![OpenAI Tunnels page](docs/tunnel-page-annotated.png)
-
-For a new tunnel, update `--tunnel-id` and `--organization-id` in [scripts/start-tunnel.ps1](scripts/start-tunnel.ps1). Do not put a runtime API key in source control.
-
-### 4. Store the runtime key locally
-
-```powershell
-New-Item -ItemType Directory -Force .tunnel | Out-Null
-$secureKey = Read-Host 'OpenAI tunnel runtime API key' -AsSecureString
-ConvertFrom-SecureString $secureKey | Set-Content .tunnel\control-plane-api-key.dpapi
-```
-
-This encrypts the key with Windows DPAPI for the current Windows user. The `.tunnel` directory is ignored by Git.
-
-### 5. Start the connection
-
-Install/link the CLI once from the repository:
-
-```powershell
-npm install
-npm link
-```
-
-Then use the operator CLI:
-
-```powershell
-chatgpt-local setup
-chatgpt-local up
-chatgpt-local status
-```
-
-Lifecycle and diagnostics commands:
+## Workspace Layout
 
 ```text
-chatgpt-local up
-chatgpt-local down
-chatgpt-local restart
-chatgpt-local status
-chatgpt-local machine list
-chatgpt-local doctor
-chatgpt-local check
-chatgpt-local config show
-chatgpt-local version
+chatgpt-pilot/
+├── apps/
+│   ├── server/          # Core runtime (HTTP Streamable/Stdio, Tunnel Supervisor, CLI)
+│   └── playground/      # Local integration testbed
+├── packages/
+│   ├── thinkforge/      # Reasoning & problem reframing MCP
+│   ├── skill-hub/       # Reusable skills discovery & execution gateway
+│   ├── memory/          # Persistent Second Brain & recall
+│   ├── mcp-server/      # Minimal MCP transport entrypoint
+│   └── core/            # Shared contracts & descriptors
+└── skills/              # 110+ curated agentic workflow procedures
 ```
 
-The underlying `scripts/` commands remain available for debugging, but normal operation should use `chatgpt-local`.
+---
 
-`chatgpt-local setup` creates a local, Git-ignored `.chatgpt-machine/config.json`. It controls the workspace root, `workspace` vs `unrestricted` access mode, policy, approval mode, and the supervisor hard deadline. Use `chatgpt-local config show` to inspect the effective local settings; `config reset` restores the defaults.
+## Quick Start
 
-The tunnel-facing stdio entry point is `dist/supervisor.js`. It runs `dist/index.js` as an isolated MCP worker. If that worker crashes or stops answering past the hard deadline, the supervisor returns a recoverable error, restarts the worker, replays MCP initialization, and keeps the tunnel process alive. `chatgpt-local status` also reports the persisted worker generation and restart count from `.chatgpt-machine/supervisor.json`.
-
-While the tunnel is intentionally active, a small local watchdog also checks the managed runtime every 15 seconds. After two failed status checks it reconnects the tunnel and writes bounded diagnostics to `.tunnel/watch-tunnel.log`. `chatgpt-local down` stops the watchdog first, so an explicit shutdown is never undone by automatic recovery.
-
-Continue only when the tunnel status reports:
-
-```text
-process_running : True
-healthy         : True
-ready           : True
-```
-
-For a supervised runtime, `chatgpt-local status` should additionally report `supervisor: ready`.
-
-Stop or restart the connection when it is not needed:
-
-```powershell
-chatgpt-local down      # or .\scripts\stop-tunnel.ps1
-chatgpt-local restart   # rebuild, stop, then start the tunnel
-```
-
-### 6. Add it in ChatGPT Web
-
-Enable Developer mode in ChatGPT if required. Add the MCP app/connector for the tunnel, select `ChatGPT Machine MCP`, then refresh or reconnect its tools.
-
-Test with:
-
-```text
-ใช้ machine_status ตรวจว่าเชื่อมต่อเครื่อง local สำเร็จ และอย่าแก้ไขไฟล์
-```
-
-After changing MCP code: run `npm run build`, stop/start the tunnel, and refresh the connector so ChatGPT receives the latest tool schema.
-
-
-Useful local checks:
-
-```powershell
-chatgpt-local doctor          # dependencies + workspace permissions
-chatgpt-local check           # effective config + v4 / 44-tool contract fingerprint
-npm run smoke                 # real MCP + supervisor recovery smoke tests
-npm run verify                # full tests + server contract check
-# Preview all mutations without executing them:
-node dist/index.js --root D:\Projects\Github --dry-run
-```
-
-The current MCP contract is v4: 44 public tools with a SHA-256 fingerprint derived from tool names, schemas, and annotations. The coding-oriented additions are `read_files`, `project_snapshot`, and the read-only remote route `machine_read`; existing local tools and the high-authority `machine_call` route remain available.
-
-For coding work, `read_files` batches up to 50 bounded text reads under one combined byte budget, while `project_snapshot` returns a bounded Git/tree/package/scripts/instructions view for fast repository orientation. `machine_status` now reports `runtimeRoot`, `configuredRoot`, and `configApplied` separately so `restartRequired` is derived from live supervisor state instead of ambiguous path labels. Synchronous PowerShell `shell_command` calls use fail-fast PowerShell error handling and report `success`, `hadPowerShellError`, and output byte counts rather than treating a non-terminating PowerShell error as success.
-
-## Multi-machine routing
-
-One tunnel can act as a gateway to multiple registered MCP nodes. Remote nodes are selected explicitly by machine id, name, hostname, alias, IP address, or `host:port`; arbitrary unregistered URLs are never accepted from a tool call.
-
-Register nodes on the gateway:
-
-```powershell
-chatgpt-local machine add server 192.168.1.20:8787 --hostname HOME-SERVER --alias buildbox --token-env MCP_NODE_SERVER_TOKEN
-chatgpt-local machine list
-```
-
-`machines.json` lives under the Git-ignored `.chatgpt-machine/` directory. `tokenEnv` stores only the environment-variable name, never the bearer token itself. Set that environment variable on the gateway before starting the tunnel.
-
-Run each remote node with Streamable HTTP and a bearer token when binding outside loopback:
-
-```powershell
-$env:MCP_HTTP_TOKEN = '<node-secret>'
-node dist/index.js --http --http-host 0.0.0.0 --http-port 8787 --http-token $env:MCP_HTTP_TOKEN --root D:\Projects --dangerously-open-machine
-```
-
-Keep the node port restricted to the trusted LAN, VPN, or Tailscale network. Plain HTTP is accepted by the gateway only for local/private addresses; public endpoints must use HTTPS. The `developer` gateway policy approval-gates `machine_call`. `machine_read` does not need that mutation approval, but it first discovers the selected remote tool and requires its `readOnlyHint=true` annotation; missing or mutating annotations fail closed. The selected remote node independently enforces its own workspace, policy, approval, and audit rules.
-
-From ChatGPT, use `machines_list`, then `machine_probe`, `machine_tools`, `machine_read`, or `machine_call`. `machine_tools` caches the remote capability list for 60 seconds, exposes a capability fingerprint, and accepts `refresh=true` to force rediscovery; a changed fingerprint replaces the cached entry. Prefer `machine_read(machine="192.168.1.20", tool="git_status", arguments={...})` for proven read-only work and reserve `machine_call` for mutations. Routed audit records expose `targetMachine` and `remoteTool` as top-level fields. Existing tools such as `read_file` continue to operate on the gateway machine itself.
-
-When using local HTTP transport, the redacted recent-call viewer is available at `http://127.0.0.1:8787/ui`. If `MCP_HTTP_TOKEN` is enabled, the UI endpoints require the same Bearer authorization header.
-
-## macOS / Ubuntu / WSL setup
-
-The MCP server, file/process/Git tools, and tunnel lifecycle are supported on macOS, Ubuntu, and Ubuntu WSL. The Bash scripts use Keychain on macOS; Ubuntu/WSL use either `CONTROL_PLANE_API_KEY` for one launch or a local key file with mode `600`.
-
+### 1. Install & Build
 ```bash
-brew install node git gh
-git clone https://github.com/JonusNattapong/ChatGPTMCP.git
-cd ChatGPTMCP
-npm install && npm test
-
-# macOS: download darwin-arm64 on Apple Silicon, or darwin-amd64 on Intel.
-mkdir -p tools/tunnel-client-v0.0.13
-gh release download v0.0.13 --repo openai/tunnel-client --pattern "tunnel-client-v0.0.13-darwin-*.zip" --dir tools
-unzip tools/tunnel-client-v0.0.13-darwin-*.zip -d tools/tunnel-client-v0.0.13
-chmod +x tools/tunnel-client-v0.0.13/tunnel-client
-
-# Enter the OpenAI runtime key at the prompt; it is stored in your Keychain.
-security add-generic-password -U -a "$USER" -s chatgpt-machine-mcp-tunnel -w
-export OPENAI_TUNNEL_ID="tunnel_..."
-export OPENAI_ORGANIZATION_ID="org_..."
-./scripts/start-tunnel.sh
-./scripts/status-tunnel.sh
+pnpm install
+pnpm build
 ```
 
-Use `./scripts/stop-tunnel.sh` to stop it. Download only the matching release archive for your architecture; do not extract both archives into the same directory.
-
-On Ubuntu or WSL, use the matching `linux-amd64` or `linux-arm64` archive instead. Store the key without committing it:
-
+### 2. Verify Capabilities (Zero-Config Auto Discovery)
 ```bash
-mkdir -p .tunnel
-umask 077
-printf '%s' "$CONTROL_PLANE_API_KEY" > .tunnel/control-plane-api-key
-chmod 600 .tunnel/control-plane-api-key
-export OPENAI_TUNNEL_ID="tunnel_..."
-export OPENAI_ORGANIZATION_ID="org_..."
-./scripts/start-tunnel.sh
+# Check all 4 capability groups (Legacy mode)
+pnpm check
+
+# Check Hybrid surface (toolpy + capability_registry)
+pnpm check:hybrid
 ```
 
-WSL runs in a Linux boundary: its MCP can operate WSL files and Linux processes. Run the Windows setup above if ChatGPT must operate native Windows applications, Windows services, or the Windows filesystem outside mounted drive paths.
+### 3. Manage Tunnel & Workstation CLI
+```bash
+# Check status of local tunnel
+pnpm pilot status
 
-## Automatic startup
+# Start tunnel
+pnpm pilot up
 
-The project does **not** start the tunnel automatically after Windows restarts. This is intentional because an active tunnel grants remote access with your Windows account's authority.
+# Stop tunnel
+pnpm pilot down
 
-If you decide to enable auto-start, create a Windows Task Scheduler task that runs after you sign in and executes:
-
-```powershell
-pwsh.exe -NoProfile -ExecutionPolicy Bypass -File D:\Projects\Github\ChatGPTMCP\scripts\start-tunnel.ps1
+# Check configuration & doctor
+pnpm pilot doctor
+pnpm pilot check
 ```
 
-Use **Run only when user is logged on** and **do not store a password**. Disable or delete that task when the machine should no longer be remotely reachable.
+---
 
-On macOS, use a per-user LaunchAgent only if you explicitly want the same persistent remote access after login. It should execute `scripts/start-tunnel.sh` with `OPENAI_TUNNEL_ID` and `OPENAI_ORGANIZATION_ID` set in its environment; the runtime key remains in Keychain. Do not use a system-wide daemon for this user-scoped setup.
+## Design Highlights
 
-## Help
-
-- Check status: `./scripts/status-tunnel.ps1`
-- Rebuild after source changes: `npm run build`
-- Full architecture, safety model, tools, HTTP, and development: [technical guide](https://jonusnattapong.github.io/ChatGPTMCP/)
+- **Zero-Config Auto Discovery**: The server automatically discovers and connects internal workspace modules (`thinkforge`, `skill-hub`, `memory`, `skills`) without requiring manual `--*-dir` path flags.
+- **Hybrid Execution Model**: Advertises a compact `toolpy` surface to ChatGPT while keeping low-level primitives programmatically composable behind controlled Python execution.
+- **Full Safety & Governance**: Safe-mode workspace boundary, NDJSON audit logging, approval state validation, and idempotency receipts.

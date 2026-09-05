@@ -1,9 +1,8 @@
 node_modules/
 dist/
-*.log
+coverage/
 .env
-.tunnel/
-.chatgpt-machine/
-docs-*.png
-tools/*.zip
-tools/tunnel-client-v*/
+.env.*
+!.env.example
+.DS_Store
+*.log
