@@ -1,6 +1,6 @@
 {
-  "name": "@chatgpt-developer-plugin/mcp-server",
-  "version": "0.1.0",
+  "name": "@chatgpt-pilot/mcp-server",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": "./dist/index.js",

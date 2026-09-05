@@ -1,6 +1,6 @@
 {
-  "name": "@chatgpt-developer-plugin/playground",
-  "version": "0.1.0",
+  "name": "@chatgpt-pilot/playground",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,11 +9,12 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@chatgpt-developer-plugin/core": "workspace:*",
-    "@chatgpt-developer-plugin/mcp-server": "workspace:*",
+    "@chatgpt-pilot/core": "workspace:*",
+    "@chatgpt-pilot/mcp-server": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.17.4"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "typescript": "^5.9.2"
   }
 }

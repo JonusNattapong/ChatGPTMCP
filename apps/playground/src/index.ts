@@ -1,12 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { builtinCapabilities } from "@chatgpt-developer-plugin/core";
-import { createMcpServer } from "@chatgpt-developer-plugin/mcp-server";
+import { builtinCapabilities, type CapabilityDescriptor } from "@chatgpt-pilot/core";
+import { createMcpServer } from "@chatgpt-pilot/mcp-server";
 
 async function runPlayground(): Promise<void> {
-  console.log("=== ChatGPT Developer Plugin Playground ===");
+  console.log("=== ChatGPT Pilot Playground ===");
   console.log(`Core capabilities registered: ${builtinCapabilities.length}`);
-  builtinCapabilities.forEach((cap) => {
+  builtinCapabilities.forEach((cap: CapabilityDescriptor) => {
     console.log(` - [${cap.risk.toUpperCase()}] ${cap.name}: ${cap.description}`);
   });
 
@@ -17,8 +17,8 @@ async function runPlayground(): Promise<void> {
   await server.connect(serverTransport);
 
   const client = new Client({
-    name: "chatgpt-developer-playground",
-    version: "0.1.0",
+    name: "chatgpt-pilot-playground",
+    version: "1.0.0",
   });
   await client.connect(clientTransport);
 
@@ -42,7 +42,7 @@ async function runPlayground(): Promise<void> {
   console.log("\nPlayground run completed successfully.");
 }
 
-runPlayground().catch((err) => {
+runPlayground().catch((err: unknown) => {
   console.error("Playground execution failed:", err);
   process.exit(1);
 });

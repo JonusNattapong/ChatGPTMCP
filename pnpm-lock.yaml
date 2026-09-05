@@ -10,16 +10,19 @@ importers:
 
   apps/playground:
     dependencies:
-      '@chatgpt-developer-plugin/core':
+      '@chatgpt-pilot/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@chatgpt-developer-plugin/mcp-server':
+      '@chatgpt-pilot/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
       '@modelcontextprotocol/sdk':
         specifier: ^1.17.4
         version: 1.30.0(zod@4.5.4)
     devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
