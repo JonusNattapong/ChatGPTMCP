@@ -1,0 +1,218 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture Specification — ChatGPT Pilot</title>
+  <meta name="description" content="Detailed architecture specification, system topology, security boundaries, and storage layout of ChatGPT Pilot.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: rgba(22, 29, 47, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #6366f1;
+      --cyan: #06b6d4;
+      --emerald: #10b981;
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.7;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      backdrop-filter: blur(12px);
+      background: rgba(11, 15, 25, 0.85);
+      border-bottom: 1px solid var(--card-border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.95rem;
+    }
+    nav a:hover { color: #fff; }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem;
+    }
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, #ffffff 30%, #a5b4fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    h2 {
+      font-size: 1.6rem;
+      margin: 2.5rem 0 1rem;
+      color: #fff;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 0.5rem;
+    }
+    h3 {
+      font-size: 1.2rem;
+      margin: 1.5rem 0 0.75rem;
+      color: var(--cyan);
+    }
+    p, li {
+      color: #cbd5e1;
+      margin-bottom: 1rem;
+    }
+    ul {
+      margin-left: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    pre {
+      background: #060911;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 1.25rem;
+      font-family: var(--mono);
+      font-size: 0.88rem;
+      color: #93c5fd;
+      overflow-x: auto;
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    code {
+      font-family: var(--mono);
+      font-size: 0.9em;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      color: #a5b4fc;
+    }
+    pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--accent);
+      text-decoration: none;
+      margin-bottom: 1.5rem;
+      font-weight: 500;
+    }
+    .back-link:hover { text-decoration: underline; }
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 2rem 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-top: 4rem;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" style="font-weight: 700; color: #fff;">⚡ ChatGPT Pilot Docs</a>
+    <div>
+      <a href="index.html">← Back to Overview</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <a href="index.html" class="back-link">← Return to Overview</a>
+    <h1>Architecture Specification</h1>
+    <p>This document details the system topology, subsystem boundaries, storage contracts, and security invariants governing ChatGPT Pilot.</p>
+
+    <h2>1. System Topology & Architecture Boundaries</h2>
+    <p>ChatGPT Pilot functions as a unified gateway and capability fabric bridging AI client interfaces (ChatGPT Web via MCP tunnel, Codex, and local agents) with the developer's local operating system and tool ecosystem.</p>
+
+    <pre>
+               ┌────────────────────────────────────────────────────────────┐
+               │                  ChatGPT / Codex Client                    │
+               └─────────────────────────────┬──────────────────────────────┘
+                                             │  MCP (JSON-RPC 2.0)
+                                             ▼
+               ┌────────────────────────────────────────────────────────────┐
+               │           ChatGPT Pilot Server (`apps/server`)             │
+               │  - Stdio & HTTP Streamable Transports                      │
+               │  - Worker Supervisor Daemon & Heartbeat Circuit Breaker    │
+               │  - Policy Governor & Precondition Verifiers                │
+               │  - NDJSON Audit Stream (`.pilot/audit.ndjson`)             │
+               └───────────┬──────────────┬──────────────┬─────────────┬────┘
+                           │              │              │             │
+               ┌───────────┴───┐   ┌──────┴──────┐ ┌─────┴─────┐ ┌─────┴──────────┐
+               │  💻 Machine   │   │  🧠 Think   │ │ 📚 Skills │ │   💾 Memory    │
+               │   Primitives  │   │  ThinkForge │ │ Skill Hub │ │  Living Book   │
+               └───────────────┘   └─────────────┘ └───────────┘ └────────────────┘
+    </pre>
+
+    <h2>2. The Four Pillar Subsystems</h2>
+
+    <h3>2.1 Coding & System Execution (apps/server)</h3>
+    <ul>
+      <li><strong>Isolation & Sandboxing:</strong> Restricts commands and mutations strictly inside <code>root</code> when in <code>workspace</code> mode. In <code>unrestricted</code> mode, operations require explicit authorization flags (<code>--dangerously-open-machine</code>).</li>
+      <li><strong>Verified Commits:</strong> <code>git_commit_verified</code> executes pre-commit verification gates (unit tests, build checks, and linter). If verification fails or unstaged files mutate during testing, staging is rolled back and the commit is aborted.</li>
+      <li><strong>Persistent Python Execution (toolpy):</strong> Provides stateful IPython kernels holding runtime variables across calls, exposing internal capabilities as local Python functions.</li>
+    </ul>
+
+    <h3>2.2 Cognitive Accelerators (packages/thinkforge)</h3>
+    <ul>
+      <li>Provides divergent and convergent thinking structures.</li>
+      <li>Tools: <code>think_diverge</code>, <code>think_converge</code>, <code>think_challenge</code>, <code>think_reframe</code>, <code>think_perspective_swap</code>, <code>think_stress_test</code>.</li>
+      <li>Enables models to test hypotheses, identify blind spots, and optimize architectures prior to code generation.</li>
+    </ul>
+
+    <h3>2.3 Dynamic Skills Engine (packages/skill-hub + skills/)</h3>
+    <ul>
+      <li>Discovers, validates, and executes procedures from the 111+ skills repository.</li>
+      <li>Skill metadata is exposed via lightweight descriptors (<code>skills_list</code>), with full procedures fetched on demand (<code>skills_get_spec</code>, <code>skills_run</code>).</li>
+    </ul>
+
+    <h3>2.4 Living Memory Book Engine (packages/memory)</h3>
+    <ul>
+      <li><strong>Pure Markdown Second Brain:</strong> Pure Markdown documents manipulated via standard Node.js modules without native C++ or SQLite dependencies.</li>
+      <li><strong>Master Table of Contents (TOC.md):</strong> Automatically indexes chapters, subtopics, and chronological events.</li>
+      <li><strong>Chapters:</strong> <code>01-identity.md</code>, <code>02-projects.md</code>, <code>03-architecture.md</code>, <code>04-timeline.md</code>.</li>
+      <li><strong>Timesteps:</strong> Daily/monthly journals enabling temporal recall (<code>memory_recall_time</code>).</li>
+      <li><strong>Self-Seeding:</strong> Automatically seeds from <code>packages/memory/seed/</code> on fresh systems.</li>
+    </ul>
+
+    <h2>3. Storage Architecture & Runtime Isolation</h2>
+    <pre>
+chatgpt-pilot/
+├── apps/server/          # MCP Gateway runtime & system tools
+├── packages/
+│   ├── memory/           # Pure Markdown Living Memory Book
+│   ├── thinkforge/       # Cognitive scaffolds & problem reframing
+│   ├── skill-hub/        # Curated skills registry & execution gateway
+│   ├── mcp-server/       # Minimal MCP adapter
+│   └── core/             # Shared contracts & types
+├── skills/               # 111+ curated agent skills in markdown format
+├── scripts/              # Platform tunnel and management scripts (.ps1, .sh)
+└── .pilot/               # Runtime local directory (audit.ndjson, config.json, memory/)
+    </pre>
+
+    <h2>4. Security Invariants & Guardrails</h2>
+    <ul>
+      <li><strong>Filesystem & Mutation Safety:</strong> Bounded read output, no binary reads, atomic edits with precondition SHA-256 checks.</li>
+      <li><strong>Credential Redaction:</strong> Common credential formats (.env, private keys, tokens) are automatically redacted before crossing the transport boundary.</li>
+      <li><strong>Pre-commit Verification Gate:</strong> Monorepo test suite (138 tests) must pass with 100% success before pushes.</li>
+      <li><strong>Line Endings:</strong> All shell scripts (.sh) maintain LF line endings to prevent Linux cross-platform syntax errors.</li>
+    </ul>
+  </main>
+
+  <footer>
+    <p>ChatGPT Pilot • <a href="https://github.com/JonusNattapong/chatgpt-pilot" style="color: var(--accent);">GitHub Repository</a></p>
+  </footer>
+</body>
+</html>
