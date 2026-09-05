@@ -1,603 +1,203 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ChatGPT Pilot — Full-Stack Local MCP Workstation</title>
-  <meta name="description" content="Local Model Context Protocol (MCP) gateway and capability fabric uniting Machine Execution, ThinkForge, Skill Hub, and Pure Markdown Living Memory.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
-  <style>
-    :root {
-      --bg: #0b0f19;
-      --card-bg: rgba(22, 29, 47, 0.7);
-      --card-border: rgba(255, 255, 255, 0.08);
-      --card-hover-border: rgba(99, 102, 241, 0.4);
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
-      --accent: #6366f1;
-      --accent-glow: rgba(99, 102, 241, 0.25);
-      --emerald: #10b981;
-      --emerald-glow: rgba(16, 185, 129, 0.2);
-      --cyan: #06b6d4;
-      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Thai', sans-serif;
-      --mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: var(--font);
-      line-height: 1.6;
-      overflow-x: hidden;
-      min-height: 100vh;
-    }
-
-    /* Background Glow Effects */
-    .glow-sphere-1 {
-      position: fixed;
-      top: -150px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 700px;
-      height: 450px;
-      background: radial-gradient(circle, var(--accent-glow) 0%, rgba(11, 15, 25, 0) 70%);
-      pointer-events: none;
-      z-index: 0;
-    }
-    .glow-sphere-2 {
-      position: fixed;
-      bottom: -150px;
-      right: -100px;
-      width: 500px;
-      height: 500px;
-      background: radial-gradient(circle, var(--emerald-glow) 0%, rgba(11, 15, 25, 0) 70%);
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    /* Navigation */
-    nav {
-      position: sticky;
-      top: 0;
-      backdrop-filter: blur(12px);
-      background: rgba(11, 15, 25, 0.85);
-      border-bottom: 1px solid var(--card-border);
-      z-index: 50;
-      padding: 1rem 2rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .nav-brand {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      font-weight: 700;
-      font-size: 1.15rem;
-      text-decoration: none;
-      color: var(--text);
-    }
-    .nav-brand .pulse {
-      width: 10px;
-      height: 10px;
-      background: var(--emerald);
-      border-radius: 50%;
-      box-shadow: 0 0 10px var(--emerald);
-    }
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 1.5rem;
-    }
-    .nav-links a {
-      color: var(--text-muted);
-      text-decoration: none;
-      font-size: 0.95rem;
-      transition: color 0.2s;
-    }
-    .nav-links a:hover { color: var(--text); }
-    .btn-github {
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid var(--card-border);
-      padding: 0.45rem 1rem;
-      border-radius: 9999px;
-      color: var(--text) !important;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-weight: 500;
-      transition: all 0.2s;
-    }
-    .btn-github:hover {
-      background: rgba(255, 255, 255, 0.15);
-      border-color: rgba(255, 255, 255, 0.25);
-    }
-
-    /* Container */
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 2rem;
-      position: relative;
-      z-index: 1;
-    }
-
-    /* Hero */
-    .hero {
-      padding: 5rem 0 3rem;
-      text-align: center;
-    }
-    .badge-status {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      background: rgba(99, 102, 241, 0.15);
-      border: 1px solid rgba(99, 102, 241, 0.3);
-      padding: 0.35rem 1rem;
-      border-radius: 9999px;
-      font-size: 0.85rem;
-      color: #a5b4fc;
-      margin-bottom: 1.5rem;
-    }
-    .hero h1 {
-      font-size: 3.2rem;
-      font-weight: 800;
-      line-height: 1.2;
-      margin-bottom: 1.25rem;
-      background: linear-gradient(135deg, #ffffff 30%, #a5b4fc 70%, #67e8f9 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    .hero p {
-      font-size: 1.2rem;
-      color: var(--text-muted);
-      max-width: 760px;
-      margin: 0 auto 2.5rem;
-    }
-    .hero-actions {
-      display: flex;
-      justify-content: center;
-      gap: 1rem;
-      margin-bottom: 3.5rem;
-      flex-wrap: wrap;
-    }
-    .btn-primary {
-      background: var(--accent);
-      color: #fff;
-      padding: 0.75rem 1.75rem;
-      border-radius: 8px;
-      font-weight: 600;
-      text-decoration: none;
-      box-shadow: 0 4px 20px var(--accent-glow);
-      transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 24px rgba(99, 102, 241, 0.4);
-    }
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--card-border);
-      color: var(--text);
-      padding: 0.75rem 1.75rem;
-      border-radius: 8px;
-      font-weight: 600;
-      text-decoration: none;
-      transition: background 0.2s;
-    }
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.1);
-    }
-
-    /* Metrics Bar */
-    .metrics-bar {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 1.5rem;
-      margin-bottom: 4.5rem;
-    }
-    .metric-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      padding: 1.5rem;
-      border-radius: 12px;
-      text-align: center;
-      backdrop-filter: blur(8px);
-    }
-    .metric-value {
-      font-size: 2rem;
-      font-weight: 800;
-      color: #fff;
-      margin-bottom: 0.25rem;
-    }
-    .metric-value.cyan { color: var(--cyan); }
-    .metric-value.emerald { color: var(--emerald); }
-    .metric-value.indigo { color: #a5b4fc; }
-    .metric-label {
-      font-size: 0.9rem;
-      color: var(--text-muted);
-    }
-
-    /* Four Pillars */
-    .section-header {
-      text-align: center;
-      margin-bottom: 3rem;
-    }
-    .section-header h2 {
-      font-size: 2.25rem;
-      font-weight: 700;
-      margin-bottom: 0.75rem;
-    }
-    .section-header p {
-      color: var(--text-muted);
-      font-size: 1.1rem;
-      max-width: 650px;
-      margin: 0 auto;
-    }
-
-    .pillars-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
-      gap: 1.5rem;
-      margin-bottom: 5rem;
-    }
-    .pillar-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 2rem;
-      transition: all 0.3s ease;
-      backdrop-filter: blur(8px);
-      position: relative;
-      display: flex;
-      flex-direction: column;
-    }
-    .pillar-card:hover {
-      border-color: var(--card-hover-border);
-      transform: translateY(-4px);
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
-    }
-    .pillar-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.5rem;
-      margin-bottom: 1.25rem;
-      background: rgba(99, 102, 241, 0.1);
-      border: 1px solid rgba(99, 102, 241, 0.2);
-    }
-    .pillar-card:nth-child(2) .pillar-icon {
-      background: rgba(6, 182, 212, 0.1);
-      border-color: rgba(6, 182, 212, 0.2);
-    }
-    .pillar-card:nth-child(3) .pillar-icon {
-      background: rgba(245, 158, 11, 0.1);
-      border-color: rgba(245, 158, 11, 0.2);
-    }
-    .pillar-card:nth-child(4) .pillar-icon {
-      background: rgba(16, 185, 129, 0.1);
-      border-color: rgba(16, 185, 129, 0.2);
-    }
-    .pillar-card h3 {
-      font-size: 1.3rem;
-      font-weight: 700;
-      margin-bottom: 0.5rem;
-      color: #fff;
-    }
-    .pillar-card .pillar-sub {
-      font-size: 0.85rem;
-      color: #818cf8;
-      font-family: var(--mono);
-      margin-bottom: 1rem;
-    }
-    .pillar-card p {
-      color: var(--text-muted);
-      font-size: 0.95rem;
-      margin-bottom: 1.25rem;
-      flex-grow: 1;
-    }
-    .pillar-card ul {
-      list-style: none;
-      padding: 0;
-      font-size: 0.88rem;
-      color: #cbd5e1;
-    }
-    .pillar-card ul li {
-      margin-bottom: 0.4rem;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    .pillar-card ul li::before {
-      content: "▹";
-      color: var(--cyan);
-    }
-
-    /* Topology Code Section */
-    .topology-section {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 2.5rem;
-      margin-bottom: 5rem;
-    }
-    .topology-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 1.5rem;
-      flex-wrap: wrap;
-      gap: 1rem;
-    }
-    .topology-header h3 {
-      font-size: 1.4rem;
-    }
-    .code-block {
-      background: #060911;
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 10px;
-      padding: 1.5rem;
-      font-family: var(--mono);
-      font-size: 0.88rem;
-      color: #93c5fd;
-      overflow-x: auto;
-      line-height: 1.5;
-    }
-
-    /* Quick Start */
-    .quickstart-section {
-      margin-bottom: 5rem;
-    }
-    .steps-container {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 1.5rem;
-    }
-    .step-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 1.75rem;
-    }
-    .step-num {
-      width: 28px;
-      height: 28px;
-      background: var(--accent);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      font-size: 0.85rem;
-      margin-bottom: 1rem;
-    }
-    .step-card h4 {
-      font-size: 1.1rem;
-      margin-bottom: 0.5rem;
-      color: #fff;
-    }
-    .step-card p {
-      font-size: 0.9rem;
-      color: var(--text-muted);
-      margin-bottom: 1rem;
-    }
-    .step-code {
-      background: #060911;
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 8px;
-      padding: 0.75rem 1rem;
-      font-family: var(--mono);
-      font-size: 0.82rem;
-      color: #34d399;
-      overflow-x: auto;
-      white-space: nowrap;
-    }
-
-    /* Footer */
-    footer {
-      border-top: 1px solid var(--card-border);
-      padding: 3rem 0;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 0.9rem;
-    }
-    footer a {
-      color: var(--accent);
-      text-decoration: none;
-    }
-    footer a:hover { text-decoration: underline; }
-
-    @media (max-width: 768px) {
-      .hero h1 { font-size: 2.2rem; }
-      nav { padding: 1rem; }
-      .nav-links { display: none; }
-    }
-  </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ChatGPTMCP Hybrid technical documentation and runtime reference.">
+  <title>ChatGPTMCP Hybrid - Documentation</title>
+  <link rel="stylesheet" href="docs.css">
 </head>
 <body>
-  <div class="glow-sphere-1"></div>
-  <div class="glow-sphere-2"></div>
+  <header class="site-header">
+    <a class="brand" href="#overview">ChatGPTMCP <span>/ docs</span></a>
+    <nav class="header-links" aria-label="Utility navigation">
+      <a href="../README.md">README</a>
+      <a href="https://github.com/JonusNattapong/ChatGPTMCP">GitHub</a>
+      <a class="language-link" href="index.th.html" lang="th">ไทย</a>
+    </nav>
+  </header>
 
-  <nav>
-    <a href="#" class="nav-brand">
-      <span class="pulse"></span>
-      <span>ChatGPT Pilot</span>
-    </a>
-    <div class="nav-links">
-      <a href="#pillars">Four Pillars</a>
-      <a href="#topology">Architecture</a>
-      <a href="#quickstart">Quick Start</a>
-      <a href="architecture.html">Architecture Spec</a>
-      <a href="https://github.com/JonusNattapong/chatgpt-pilot" class="btn-github" target="_blank">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        <span>GitHub</span>
-      </a>
-    </div>
-  </nav>
+  <div class="docs-layout">
+    <aside class="sidebar">
+      <p class="sidebar-title">Documentation</p>
+      <nav aria-label="Documentation sections">
+        <a href="#overview">Overview</a>
+        <a href="#hybrid">Hybrid surface</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#tools">Tool surface</a>
+        <a href="#safety">Safety model</a>
+        <a href="#transport">Transport</a>
+        <a href="#operations">Operations</a>
+        <a href="#development">Development</a>
+      </nav>
+      <p class="group">Related</p>
+      <nav aria-label="Related documentation">
+        <a href="../SECURITY.md">Security policy</a>
+        <a href="../CHANGELOG.md">Changelog</a>
+      </nav>
+    </aside>
 
-  <main class="container">
-    <section class="hero">
-      <div class="badge-status">
-        <span>●</span> v1.0.0 Stable • Zero-Config MCP Architecture • 100% Green Cross-Platform CI
-      </div>
-      <h1>The Unified Local MCP Workstation for ChatGPT</h1>
-      <p>Transform ChatGPT into an autonomous, safe, full-stack engineering cockpit. Uniting low-level machine execution, cognitive accelerators, 139+ curated agent skills, and a pure Markdown Living Memory Book.</p>
-      
-      <div class="hero-actions">
-        <a href="#quickstart" class="btn-primary">Quick Start</a>
-        <a href="architecture.html" class="btn-secondary">Explore Architecture Spec</a>
-        <a href="https://github.com/JonusNattapong/chatgpt-pilot" class="btn-secondary" target="_blank">View on GitHub</a>
-      </div>
+    <main class="content">
+      <section class="intro" id="overview">
+        <p class="kicker">Technical reference</p>
+        <h1>ChatGPTMCP Hybrid</h1>
+        <p class="summary">A compact ChatGPT-facing surface over machine operations, reasoning tools, reusable skills, and persistent memory. ChatGPT plans the work; <code>toolpy</code> composes the underlying capabilities.</p>
+        <dl class="facts">
+          <div><dt>Public surface</dt><dd>2 tools</dd></div>
+          <div><dt>Runtime</dt><dd>Persistent IPython</dd></div>
+          <div><dt>Capability groups</dt><dd>coding / think / skills / memory</dd></div>
+          <div><dt>Transport</dt><dd>MCP over stdio or HTTP</dd></div>
+        </dl>
+      </section>
 
-      <div class="metrics-bar">
-        <div class="metric-card">
-          <div class="metric-value indigo">4 Pillars</div>
-          <div class="metric-label">Federated Capabilities</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value cyan">139+ Skills</div>
-          <div class="metric-label">Curated Agent Procedures</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value emerald">Pure MD</div>
-          <div class="metric-label">Living Brain Engine (Zero C++)</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value">100% Pass</div>
-          <div class="metric-label">Ubuntu & Windows CI Suite</div>
-        </div>
-      </div>
-    </section>
+      <section class="doc-section" id="hybrid">
+        <h2>Hybrid surface</h2>
+        <p>Legacy mode advertises the low-level MCP tools directly. Hybrid mode keeps those capabilities behind a controlled Python runtime and advertises only <code>toolpy</code> and <code>capability_registry</code> to ChatGPT. This reduces tool-selection noise while preserving access to the full capability set.</p>
 
-    <section id="pillars">
-      <div class="section-header">
-        <h2>The Four Pillar Subsystems</h2>
-        <p>Architected for separation of concerns, zero-config discovery, and bounded safety invariants.</p>
-      </div>
+        <table class="reference-table">
+          <thead><tr><th>Public tool</th><th>Responsibility</th></tr></thead>
+          <tbody>
+            <tr><td><code>toolpy</code></td><td>Executes model-generated Python in a persistent, controlled runtime. The cell can inspect its catalog, call approved capabilities, compose multiple operations, and return a structured result.</td></tr>
+            <tr><td><code>capability_registry</code></td><td>Returns metadata for the capabilities available behind <code>toolpy</code>, grouped as coding, think, skills, and memory. It does not execute a capability.</td></tr>
+          </tbody>
+        </table>
 
-      <div class="pillars-grid">
-        <div class="pillar-card">
-          <div class="pillar-icon">💻</div>
-          <h3>System & Machine</h3>
-          <div class="pillar-sub">apps/server</div>
-          <p>Low-level operating system primitives, background process manager, verified git commits, and stateful persistent Python execution.</p>
-          <ul>
-            <li>Verified Git Commits & Rollbacks</li>
-            <li>Persistent IPython Kernel (toolpy)</li>
-            <li>Process Supervisor & Circuit Breaker</li>
-            <li>Deterministic Contract Fingerprinting</li>
-          </ul>
+        <h3>Runtime contract</h3>
+        <div class="capability-list">
+          <div class="capability-row"><strong>allow_tools</strong><p>Read-only capabilities are available by default. Mutating capabilities must be explicitly declared on the outer <code>toolpy</code> request.</p></div>
+          <div class="capability-row"><strong>session_id</strong><p>Names a persistent IPython namespace. Imports, variables, and generated helpers can survive across calls until reset, eviction, restart, or timeout termination.</p></div>
+          <div class="capability-row"><strong>max_calls</strong><p>Bounds the number of nested MCP capability calls from one cell.</p></div>
+          <div class="capability-row"><strong>timeout_ms</strong><p>Bounds cell execution. A timeout terminates the session to guarantee cleanup.</p></div>
+          <div class="capability-row"><strong>max_output_bytes</strong><p>Bounds captured stdout, stderr, display output, and structured results.</p></div>
         </div>
 
-        <div class="pillar-card">
-          <div class="pillar-icon">🧠</div>
-          <h3>ThinkForge</h3>
-          <div class="pillar-sub">packages/thinkforge</div>
-          <p>Cognitive scaffolds enabling divergent, convergent, and stress-tested reasoning before writing code or making critical decisions.</p>
-          <ul>
-            <li>Hypothesis Divergence & Reframing</li>
-            <li>Perspective Swapping & Devil's Advocate</li>
-            <li>System Boundary Stress-Testing</li>
-            <li>Contract Convergence Synthesizer</li>
-          </ul>
+        <pre><code>catalog = await describe()
+status = await tools.machine_status({})
+result({"catalog": catalog, "status": status})</code></pre>
+
+        <p class="warning"><strong>Authority requirement:</strong> hybrid mode requires <code>--dangerously-open-machine</code>. The persistent Python runtime runs with the operating-system permissions of the MCP worker. Use the ordinary bounded tool surface when you need workspace-only authority, or place the bridge inside an external sandbox.</p>
+
+        <h3>Attach capability providers</h3>
+        <p>Hybrid mode can attach local provider directories behind <code>toolpy</code>. The current CLI accepts Skill Hub, ThinkForge, and OurBook memory providers.</p>
+        <pre><code>node dist/index.js \
+  --dangerously-open-machine \
+  --tool-surface hybrid \
+  --skill-hub-dir D:\Projects\Github\chatgpt-skill-hub \
+  --thinkforge-dir D:\Projects\Github\ThinkForge-MCP \
+  --memory-dir D:\Projects\Github\ourbook</code></pre>
+      </section>
+
+      <section class="doc-section" id="architecture">
+        <h2>Architecture</h2>
+        <p>Streamable HTTP enters the MCP server directly. Tunnel stdio enters through <code>apps/server/src/supervisor.ts</code>, which isolates <code>apps/server/src/index.ts</code> in a worker process and can restart and reinitialize that worker after a crash or hard request deadline. Inside the worker, the registry validates tool names and arguments before policy, preconditions, idempotency, and handlers can touch the host.</p>
+        <p><a href="architecture.html">Architecture reference</a></p>
+        <p class="note">The tunnel is transport plumbing. The MCP server is not tied to a specific ChatGPT UI and can serve any compatible MCP client.</p>
+      </section>
+
+      <section class="doc-section" id="tools">
+        <h2>Tool surface</h2>
+        <p>In legacy mode, the server exposes purpose-built tools for host operations. In hybrid mode, the same capabilities stay callable from <code>toolpy</code> but are not all advertised directly to ChatGPT.</p>
+
+        <div class="capability-list">
+          <div class="capability-row"><strong>Inspect</strong><p><code>machine_status</code>, <code>read_file</code>, <code>read_files</code>, <code>project_snapshot</code>, <code>list_directory</code>, <code>find_files</code>, <code>file_info</code>, <code>image_info</code>, <code>search_code</code>.</p></div>
+          <div class="capability-row"><strong>Edit</strong><p><code>write_file</code>, <code>edit_file</code>, <code>update_file</code>, <code>apply_patch</code>.</p></div>
+          <div class="capability-row"><strong>Run</strong><p><code>shell_command</code>, managed process start, status, output, wait, stop, and stdin operations.</p></div>
+          <div class="capability-row"><strong>Git</strong><p>Status, diff, log, show, branch, add, commit, verified commit, checkout, and push without shell interpolation.</p></div>
+          <div class="capability-row"><strong>System</strong><p>Process, port, environment, disk, network, and machine inspection with bounded and redacted output.</p></div>
+          <div class="capability-row"><strong>Workflow</strong><p>Verification gates, idempotency, audit inspection, remote-machine routing, and optional bounded OSINT capabilities.</p></div>
         </div>
 
-        <div class="pillar-card">
-          <div class="pillar-icon">📚</div>
-          <h3>Skill Hub</h3>
-          <div class="pillar-sub">packages/skill-hub</div>
-          <p>Dynamic execution gateway for 139+ battle-tested agent procedures spanning security, architecture, cloud, mobile, and marketing.</p>
-          <ul>
-            <li>139+ Curated Markdown Skills</li>
-            <li>Lightweight Descriptors & On-Demand Run</li>
-            <li>Safe Parameter Validation via Zod</li>
-            <li>Structured Result Envelope</li>
-          </ul>
-        </div>
+        <h3>Concurrency guard</h3>
+        <p>File reads return a SHA-256 digest. Writes can pass <code>expected_sha256</code>, converting a stale update into <code>PRECONDITION_FAILED</code> instead of silently overwriting a newer edit.</p>
 
-        <div class="pillar-card">
-          <div class="pillar-icon">💾</div>
-          <h3>Living Memory Book</h3>
-          <div class="pillar-sub">packages/memory</div>
-          <p>Pure Markdown second brain organized into Chapters, Subtopics, and Timesteps. Zero native C++ or SQLite dependencies.</p>
-          <ul>
-            <li>Auto-Indexed Master Table of Contents (TOC)</li>
-            <li>Temporal Recall by Timestep (YYYY-MM-DD)</li>
-            <li>Self-Seeding from Bundled Snapshots</li>
-            <li>Full-Text Markdown Brain Search</li>
-          </ul>
-        </div>
-      </div>
-    </section>
+        <h3>Stable failures</h3>
+        <table class="reference-table">
+          <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>INVALID_ARGUMENT</code></td><td>Missing, invalid, or out-of-range input.</td></tr>
+            <tr><td><code>PATH_DENIED</code></td><td>Workspace boundary, symlink escape, or OS permission block.</td></tr>
+            <tr><td><code>PRECONDITION_FAILED</code></td><td>The file changed after it was read.</td></tr>
+            <tr><td><code>AMBIGUOUS_MATCH</code> / <code>NO_MATCH</code></td><td>A text edit cannot be applied safely.</td></tr>
+            <tr><td><code>TIMEOUT</code> / <code>NETWORK</code></td><td>An external command or network operation did not complete.</td></tr>
+          </tbody>
+        </table>
+      </section>
 
-    <section id="topology" class="topology-section">
-      <div class="topology-header">
-        <h3>Federated System Topology</h3>
-        <a href="architecture.html" style="color: var(--cyan); font-size: 0.9rem; text-decoration: none;">View Detailed Spec →</a>
-      </div>
-      <pre class="code-block">
-               ┌────────────────────────────────────────────────────────────┐
-               │                  ChatGPT / Codex Client                    │
-               └─────────────────────────────┬──────────────────────────────┘
-                                             │  MCP (JSON-RPC 2.0 via stdio/tunnel)
-                                             ▼
-               ┌────────────────────────────────────────────────────────────┐
-               │           ChatGPT Pilot Server (`apps/server`)             │
-               │  - Stdio & Streamable Transports                           │
-               │  - Worker Supervisor Daemon & Heartbeat Circuit Breaker    │
-               │  - Pre-Commit Verification Gate & Worktree Integrity Guard │
-               │  - NDJSON Audit Stream (`.pilot/audit.ndjson`)             │
-               └───────────┬──────────────┬──────────────┬─────────────┬────┘
-                           │              │              │             │
-               ┌───────────┴───┐   ┌──────┴──────┐ ┌─────┴─────┐ ┌─────┴──────────┐
-               │  💻 Machine   │   │  🧠 Think   │ │ 📚 Skills │ │   💾 Memory    │
-               │   Primitives  │   │  ThinkForge │ │ Skill Hub │ │  Living Book   │
-               └───────────────┘   └─────────────┘ └───────────┘ └────────────────┘
-      </pre>
-    </section>
+      <section class="doc-section" id="safety">
+        <h2>Safety model</h2>
+        <p><strong>Workspace-only mode</strong> keeps file tools, search, shell working directories, and patches under <code>--root</code>. Symlink and junction escapes are rejected.</p>
+        <p><strong>Unrestricted mode</strong> uses <code>--dangerously-open-machine</code> and allows absolute paths plus arbitrary shell reach with the authority of the current OS account. Hybrid mode requires this authority because it depends on the persistent Python runtime.</p>
+        <p class="warning">This is an administrative bridge, not a hostile multi-tenant sandbox. Only connect clients and tunnels that you trust with the same authority as the OS account running the server.</p>
+        <h3>Network and image safeguards</h3>
+        <p><code>save_image_from_url</code> accepts HTTPS only, rejects private and local network destinations, limits redirects, sends no caller cookies or authorization headers, and validates supported image signatures before writing.</p>
+      </section>
 
-    <section id="quickstart" class="quickstart-section">
-      <div class="section-header">
-        <h2>Quick Start</h2>
-        <p>Get up and running with ChatGPT Pilot in under two minutes.</p>
-      </div>
+      <section class="doc-section" id="transport">
+        <h2>Transport</h2>
+        <p>Use supervised stdio for the tunnel or Streamable HTTP as an alternate transport.</p>
+        <pre><code>node dist/index.js --http --http-port 8787 --root D:\Projects\Github</code></pre>
+        <p><code>/healthz</code> reports process liveness. <code>/readyz</code> reports readiness. MCP traffic is served at <code>/mcp</code>. The dependency-free <code>/ui</code> page reads redacted audit events from <code>/ui/audit</code>.</p>
+        <p>Binding HTTP beyond loopback requires a bearer token, which also protects the UI endpoints.</p>
+        <pre><code>node dist/index.js --http --http-host 0.0.0.0 --http-token "&lt;secret&gt;" --root D:\Projects\Github</code></pre>
+      </section>
 
-      <div class="steps-container">
-        <div class="step-card">
-          <div class="step-num">1</div>
-          <h4>Clone & Install</h4>
-          <p>Clone the repository and install all workspace dependencies via pnpm.</p>
-          <div class="step-code">git clone https://github.com/JonusNattapong/chatgpt-pilot.git<br>cd chatgpt-pilot<br>pnpm install</div>
-        </div>
+      <section class="doc-section" id="operations">
+        <h2>Operations</h2>
+        <p>Use managed processes for servers and watchers. Process metadata and bounded logs are persisted under <code>.chatgpt-machine/</code>, so a restarted MCP worker can recover inspection and stop operations.</p>
+        <pre><code>chatgpt-local setup
+chatgpt-local up
+chatgpt-local status
+chatgpt-local restart
+chatgpt-local down
+chatgpt-local doctor
+chatgpt-local check
+chatgpt-local config show
+chatgpt-local version</code></pre>
+        <p>Local runtime settings live in Git-ignored <code>.chatgpt-machine/config.json</code>. <code>chatgpt-local use &lt;path&gt;</code> persists the active workspace. Status reports the live and configured roots so restart requirements come from worker state rather than assumptions.</p>
 
-        <div class="step-card">
-          <div class="step-num">2</div>
-          <h4>Build & Verify</h4>
-          <p>Compile all workspace packages and run the verified test suite.</p>
-          <div class="step-code">pnpm build<br>pnpm verify</div>
-        </div>
+        <h3>Multi-machine gateway</h3>
+        <p>Allowlisted Streamable HTTP nodes live in Git-ignored <code>.chatgpt-machine/machines.json</code>. Selectors can be an id, name, hostname, alias, IP address, or host:port. Arbitrary URLs supplied by tool callers are rejected. Proven read-only routing is separated from approval-gated remote mutation.</p>
 
-        <div class="step-card">
-          <div class="step-num">3</div>
-          <h4>Start Hybrid Gateway</h4>
-          <p>Launch the server with the hybrid capability surface connecting all 4 pillars.</p>
-          <div class="step-code"># Windows:<br>.\scripts\start-tunnel.ps1<br><br># Linux/macOS:<br>./scripts/start-tunnel.sh</div>
-        </div>
-      </div>
-    </section>
-  </main>
+        <h3>macOS, Ubuntu, and WSL</h3>
+        <p>The MCP server supports macOS, Ubuntu, and Ubuntu WSL with Bash as the default shell and POSIX process termination. WSL controls its Linux environment, not arbitrary native Windows processes.</p>
+      </section>
 
-  <footer>
-    <div class="container">
-      <p>ChatGPT Pilot (chatgpt-developer-plugin) • Open-Source under MIT License</p>
-      <p style="margin-top: 0.5rem; font-size: 0.85rem;">
-        Developed by <a href="https://github.com/JonusNattapong" target="_blank">JonusNattapong</a> & AI Agents (Antigravity) • Hosted on GitHub Pages
-      </p>
-    </div>
-  </footer>
+      <section class="doc-section" id="development">
+        <h2>Development</h2>
+        <pre><code>npm run build
+npm test
+npm run verify</code></pre>
+        <p>The test suite covers path containment, transactional edits, file preconditions, code search, image validation, timeout promotion, persistent runtime behavior, managed process lifecycle, Git inspection, transport behavior, Hybrid surface constraints, and provider routing.</p>
+
+        <h3>Repository map</h3>
+        <dl class="file-map">
+          <dt>apps/server/src/hybrid-provider.ts</dt><dd>Compact ChatGPT-facing provider that advertises <code>toolpy</code> and <code>capability_registry</code>.</dd>
+          <dt>apps/server/src/runtime-exec.ts</dt><dd>Persistent controlled IPython runtime used by <code>runtime_exec</code> and exposed as <code>toolpy</code> in Hybrid mode.</dd>
+          <dt>apps/server/src/index.ts</dt><dd>CLI parsing, provider selection, transports, runtime checks, and server startup.</dd>
+          <dt>apps/server/src/tools.ts</dt><dd>Capability registry, schemas, handlers, runtime integration, and public tool metadata.</dd>
+          <dt>apps/server/src/supervisor.ts</dt><dd>Tunnel-facing stdio proxy, hard request deadlines, worker restart, and reinitialization.</dd>
+          <dt>apps/server/src/contract.ts</dt><dd>Versioned public contract manifest and deterministic fingerprint.</dd>
+          <dt>apps/server/src/verification.ts</dt><dd>Detected fast, normal, and strict project verification plus verified local commit flow.</dd>
+          <dt>apps/server/src/machine-router.ts</dt><dd>Allowlisted remote-node registry, selector resolution, health probing, capability cache, and routed calls.</dd>
+          <dt>AGENTS.md</dt><dd>Repository invariants for coding agents.</dd>
+        </dl>
+      </section>
+
+      <footer class="page-footer">ChatGPTMCP technical documentation. Source of truth remains the repository and executable contract.</footer>
+    </main>
+
+    <aside class="toc">
+      <p class="toc-title">On this page</p>
+      <nav aria-label="On this page">
+        <a href="#hybrid">Hybrid surface</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#tools">Tool surface</a>
+        <a href="#safety">Safety model</a>
+        <a href="#transport">Transport</a>
+        <a href="#operations">Operations</a>
+        <a href="#development">Development</a>
+      </nav>
+    </aside>
+  </div>
 </body>
 </html>
