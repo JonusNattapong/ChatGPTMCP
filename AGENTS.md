@@ -44,7 +44,7 @@ When resolving architectural or implementation questions, treat these files as a
 1. `apps/server/src/tools.ts` — The tool registry: schema, description, argument validation, and handler for machine tools.
 2. `apps/server/src/contract.ts` — Versioned public tool contract and deterministic contract fingerprint.
 3. `apps/server/src/supervisor.ts` — Tunnel-facing stdio worker boundary, hard deadlines, restart/circuit breaker logic.
-4. `packages/memory/src/book.ts` — Pure Markdown Memory Engine, TOC generator, timestep indexer.
+4. `packages/memory/src/brain.ts` — Pure Markdown Memory Engine, TOC generator, timestep indexer.
 5. `apps/server/src/index.ts` — Gateway entrypoint, capability provider federation, HTTP authentication, and result envelope.
 6. `apps/server/src/verification.ts` — Pre-commit verification gates and worktree integrity checks.
 7. Test suites (`*.test.ts`) — Executable behavioral contracts.

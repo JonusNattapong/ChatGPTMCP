@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { BrainBook } from './book.js';
+import { BrainBook } from './brain.js';
 
 export const book = new BrainBook();
 
