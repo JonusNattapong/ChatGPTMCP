@@ -1,0 +1,25 @@
+﻿{
+  "name": "@chatgpt-pilot/skill-hub",
+  "version": "0.1.0",
+  "description": "MCP registry and gateway for discovering and reading reusable agent skills for ChatGPT Pilot",
+  "type": "module",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "chatgpt-skill-hub": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "yaml": "^2.7.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2"
+  }
+}

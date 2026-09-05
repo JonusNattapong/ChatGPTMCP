@@ -1,0 +1,41 @@
+{
+  "name": "@chatgpt-pilot/server",
+  "version": "1.0.0",
+  "description": "ChatGPT Pilot core server: Local MCP bridge, Hybrid runtime, toolpy, tunnel, and supervisor",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "chatgpt-pilot": "./dist/cli.js",
+    "chatgpt-local": "./dist/cli.js",
+    "chatgpt-machine-mcp": "./dist/supervisor.js"
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "tools"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "test": "node --test dist/*.test.js",
+    "smoke": "node --test dist/mcp-smoke.test.js dist/supervisor.test.js",
+    "verify": "npm run typecheck && npm run build && npm test && node dist/index.js --check",
+    "prepare": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/core": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@opentelemetry/api": "^1.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
