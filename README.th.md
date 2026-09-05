@@ -15,6 +15,10 @@ ChatGPT Pilot เป็นเซิร์ฟเวอร์ Model Context Protoc
 - **คลังกระบวนการทำงาน (`packages/skill-hub`)**: ค้นหาและเรียกใช้งานเวิร์กโฟลว์เฉพาะทางกว่า 139 รายการจากโฟลเดอร์ `skills/`
 - **ระบบจัดเก็บหน่วยความจำ Markdown (`packages/memory`)**: จัดเก็บข้อมูล, บันทึกการตัดสินใจทางสถาปัตยกรรม, และไทม์ไลน์ในรูปแบบไฟล์ Markdown มาตรฐาน โดยไม่พึ่งพาฐานข้อมูลไบนารีหรือ Native C++
 
+<p align="center">
+  <img src="docs/assets/mcp-tunnel-meme.png" alt="ChatGPT, OpenAI, and MCP Tunnel" width="750">
+</p>
+
 ## สถาปัตยกรรมระบบ
 
 ```text
