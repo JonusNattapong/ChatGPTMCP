@@ -10,6 +10,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm typecheck && pnpm test && pnpm build",
     "pilot": "node apps/server/dist/cli.js",
+    "changelog": "node scripts/update-changelog.mjs",
     "start": "node apps/server/dist/index.js",
     "check": "node apps/server/dist/index.js --check",
     "check:hybrid": "node apps/server/dist/index.js --tool-surface hybrid --dangerously-open-machine --check"

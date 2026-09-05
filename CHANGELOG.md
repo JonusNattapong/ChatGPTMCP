@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.0] - 2026-09-05
+
+### ✨ Features
+
+- **memory**: implement pure Markdown Living Memory Book engine (`927773c`)
+- **storage**: implement unified .pilot storage layout with legacy fallbacks (`13e73a1`)
+- consolidate ecosystem into ChatGPT Pilot monorepo (#2) (`bbac202`)
+- harden coding DX and remote reads (`596327b`)
+- add multi-machine MCP routing (`ff88eaa`)
+- reconnect unhealthy tunnel runtimes (`8c1f174`)
+- harden supervised runtime and verified workflows (`fb1c249`)
+
+### 🐛 Bug Fixes
+
+- avoid PowerShell security module reload (`43a66b1`)
+
+### 📚 Documentation
+
+- comprehensive documentation overhaul for chatgpt-pilot (`ae678aa`)
+- document tunnel watchdog recovery (`1102bf3`)
+- add Machine MCP logo (`abf480a`)
+
+### 🧹 Chores & Maintenance
+
+- add tunnel scripts and tool checksums (`dc911d2`)
+
+## [1.0.0] - 2026-09-05
+
+### ✨ Features
+
+- **memory**: implement pure Markdown Living Memory Book engine (`927773c`)
+- **storage**: implement unified .pilot storage layout with legacy fallbacks (`13e73a1`)
+- consolidate ecosystem into ChatGPT Pilot monorepo (#2) (`bbac202`)
+- harden coding DX and remote reads (`596327b`)
+- add multi-machine MCP routing (`ff88eaa`)
+- reconnect unhealthy tunnel runtimes (`8c1f174`)
+- harden supervised runtime and verified workflows (`fb1c249`)
+
+### 🐛 Bug Fixes
+
+- avoid PowerShell security module reload (`43a66b1`)
+
+### 📚 Documentation
+
+- comprehensive documentation overhaul for chatgpt-pilot (`ae678aa`)
+- document tunnel watchdog recovery (`1102bf3`)
+- add Machine MCP logo (`abf480a`)
+
+### 🧹 Chores & Maintenance
+
+- add tunnel scripts and tool checksums (`dc911d2`)
+
 ## [1.0.0] - 2026-09-06
 
 ### Added
