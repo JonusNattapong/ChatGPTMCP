@@ -12,8 +12,17 @@ export interface LocalConfig {
   supervisorTimeoutMs: number;
 }
 
+export function pilotStateDir(root: string): string {
+  const pilotDir = path.join(root, '.pilot');
+  const legacyDir = path.join(root, '.chatgpt-machine');
+  if (!existsSync(pilotDir) && existsSync(legacyDir)) {
+    return legacyDir;
+  }
+  return pilotDir;
+}
+
 export function localConfigPath(root: string): string {
-  return path.join(root, '.chatgpt-machine', 'config.json');
+  return path.join(pilotStateDir(root), 'config.json');
 }
 
 export function defaultLocalConfig(root: string): LocalConfig {

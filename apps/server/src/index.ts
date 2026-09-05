@@ -2,7 +2,7 @@
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { constants as fsConstants } from 'node:fs';
+import { constants as fsConstants, existsSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { access, readdir } from 'node:fs/promises';
@@ -360,7 +360,7 @@ async function buildRuntime(
     approvalState,
     idempotency: new IdempotencyStore(path.join(
       options.root,
-      '.chatgpt-machine',
+      existsSync(path.join(options.root, '.pilot')) || !existsSync(path.join(options.root, '.chatgpt-machine')) ? '.pilot' : '.chatgpt-machine',
       'receipts',
       policyFingerprint(policy) + (options.dangerouslyOpenMachine ? '-open' : '-workspace'),
     )),

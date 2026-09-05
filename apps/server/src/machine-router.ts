@@ -48,7 +48,12 @@ const CAPABILITY_TTL_MS = 60_000;
 const capabilityCache = new Map<string, CapabilityCacheEntry>();
 
 export function machinesConfigPath(projectRoot: string): string {
-  return path.join(projectRoot, '.chatgpt-machine', 'machines.json');
+  const pilotDir = path.join(projectRoot, '.pilot');
+  const legacyDir = path.join(projectRoot, '.chatgpt-machine');
+  if (!existsSync(pilotDir) && existsSync(legacyDir)) {
+    return path.join(legacyDir, 'machines.json');
+  }
+  return path.join(pilotDir, 'machines.json');
 }
 
 function privateIpv4(host: string): boolean {

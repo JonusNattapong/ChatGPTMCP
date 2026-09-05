@@ -72,7 +72,7 @@ export async function gitStatus(options: GitOptions) {
   const files = lines
     .filter((line) => !line.startsWith('## '))
     .map((line) => ({ index: line[0] ?? ' ', worktree: line[1] ?? ' ', path: line.slice(3) }))
-    .filter((file) => !file.path.startsWith('.chatgpt-machine/') && file.path !== '.chatgpt-machine');
+    .filter((file) => !file.path.startsWith('.chatgpt-machine/') && file.path !== '.chatgpt-machine' && !file.path.startsWith('.pilot/') && file.path !== '.pilot');
   const summary = {
     staged: files.filter((file) => file.index !== ' ' && file.index !== '?').length,
     unstaged: files.filter((file) => file.worktree !== ' ' && file.worktree !== '?').length,

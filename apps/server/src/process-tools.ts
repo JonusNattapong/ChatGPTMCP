@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, type WriteStream } from 'node:fs';
+import { createWriteStream, existsSync, type WriteStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -91,12 +91,21 @@ function selectShell(shell: ShellKind): { kind: Exclude<ShellKind, 'auto'>; exec
   return { kind: selected, executable: 'bash', args: ['-lc'] };
 }
 
+function pilotProcessStateDir(root: string): string {
+  const pilotDir = path.join(root, '.pilot');
+  const legacyDir = path.join(root, '.chatgpt-machine');
+  if (!existsSync(pilotDir) && existsSync(legacyDir)) {
+    return legacyDir;
+  }
+  return pilotDir;
+}
+
 function runtimeDirectory(root: string): string {
-  return path.join(root, '.chatgpt-machine', 'processes');
+  return path.join(pilotProcessStateDir(root), 'processes');
 }
 
 function registryPath(root: string): string {
-  return path.join(root, '.chatgpt-machine', 'processes.json');
+  return path.join(pilotProcessStateDir(root), 'processes.json');
 }
 
 async function persistRoot(root: string): Promise<void> {

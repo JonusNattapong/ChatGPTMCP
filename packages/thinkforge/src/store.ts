@@ -1,14 +1,24 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { ThoughtNode } from './types.js';
 
+function defaultThinkStorePath(): string {
+  if (process.env.THINKFORGE_DB) return process.env.THINKFORGE_DB;
+  const unified = join(homedir(), '.pilot', 'think', 'sessions.sqlite');
+  const legacy = join(homedir(), '.thinkforge', 'thinkforge.sqlite');
+  if (!existsSync(unified) && existsSync(legacy)) {
+    return legacy;
+  }
+  return unified;
+}
+
 export class ThoughtStore {
   readonly db: DatabaseSync;
 
-  constructor(path = process.env.THINKFORGE_DB || join(homedir(), '.thinkforge', 'thinkforge.sqlite')) {
+  constructor(path = defaultThinkStorePath()) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec(`

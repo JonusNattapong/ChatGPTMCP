@@ -61,13 +61,16 @@ export function preflight(root: string): string[] {
   const packageJson = path.join(root, 'package.json');
   if (!existsSync(packageJson)) missing.push('package.json');
 
-  if (process.platform === 'win32') {
-    if (!existsSync(path.join(root, 'tools', 'tunnel-client-v0.0.13', 'tunnel-client.exe'))) missing.push('tunnel-client');
-    if (!existsSync(path.join(root, '.tunnel', 'control-plane-api-key.dpapi')) && !process.env.CONTROL_PLANE_API_KEY) missing.push('runtime key');
-  } else {
-    if (!existsSync(path.join(root, 'tools', 'tunnel-client-v0.0.13', 'tunnel-client'))) missing.push('tunnel-client');
-    if (!process.env.CONTROL_PLANE_API_KEY && !existsSync(path.join(root, '.tunnel', 'control-plane-api-key'))) missing.push('runtime key');
-  }
+  const toolClientBinary = process.platform === 'win32' ? 'tunnel-client.exe' : 'tunnel-client';
+  if (!existsSync(path.join(root, 'tools', 'tunnel-client-v0.0.13', toolClientBinary))) missing.push('tunnel-client');
+
+  const keyFilename = process.platform === 'win32' ? 'control-plane-api-key.dpapi' : 'control-plane-api-key';
+  const hasKey = process.env.CONTROL_PLANE_API_KEY ||
+    existsSync(path.join(root, '.pilot', 'tunnel', keyFilename)) ||
+    existsSync(path.join(root, '.pilot', keyFilename)) ||
+    existsSync(path.join(root, '.tunnel', keyFilename));
+  if (!hasKey) missing.push('runtime key');
+
   return missing;
 }
 
@@ -116,7 +119,9 @@ interface SupervisorState {
 }
 
 function readSupervisorState(): SupervisorState | undefined {
-  const file = path.join(projectRoot, '.chatgpt-machine', 'supervisor.json');
+  const pilotFile = path.join(projectRoot, '.pilot', 'supervisor.json');
+  const legacyFile = path.join(projectRoot, '.chatgpt-machine', 'supervisor.json');
+  const file = existsSync(pilotFile) || !existsSync(legacyFile) ? pilotFile : legacyFile;
   if (!existsSync(file)) return undefined;
   try {
     return JSON.parse(readFileSync(file, 'utf8')) as SupervisorState;

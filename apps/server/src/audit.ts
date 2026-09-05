@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 
 export interface AuditRecord {
@@ -129,5 +129,10 @@ export class AuditLogger {
 }
 
 export function defaultAuditPath(root: string): string {
-  return path.join(root, '.chatgpt-machine', 'audit.ndjson');
+  const pilotDir = path.join(root, '.pilot');
+  const legacyDir = path.join(root, '.chatgpt-machine');
+  if (!existsSync(pilotDir) && existsSync(legacyDir)) {
+    return path.join(legacyDir, 'audit.ndjson');
+  }
+  return path.join(pilotDir, 'audit.ndjson');
 }

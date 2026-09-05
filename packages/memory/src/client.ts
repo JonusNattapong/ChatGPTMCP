@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
@@ -125,9 +126,17 @@ export function getDatabasePath() {
 
   const workspaceRoot = getWorkspaceRoot();
   if (process.env.OURBOOK_MEMORY_SCOPE === 'project') {
-    return resolve(workspaceRoot, '.ourbook', 'memory.db');
+    const pilotDb = resolve(workspaceRoot, '.pilot', 'memory.db');
+    const legacyDb = resolve(workspaceRoot, '.ourbook', 'memory.db');
+    if (!existsSync(pilotDb) && existsSync(legacyDb)) return legacyDb;
+    return pilotDb;
   }
 
   // Persistent Second Brain is global by default so memories survive sessions and projects.
-  return resolve(homedir(), '.ourbook', 'memory.db');
+  const globalPilot = resolve(homedir(), '.pilot', 'memory', 'memory.db');
+  const globalLegacy = resolve(homedir(), '.ourbook', 'memory.db');
+  if (!existsSync(globalPilot) && existsSync(globalLegacy)) {
+    return globalLegacy;
+  }
+  return globalPilot;
 }

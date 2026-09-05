@@ -6,3 +6,10 @@ coverage/
 !.env.example
 .DS_Store
 *.log
+.pilot/
+.chatgpt-machine/
+.tunnel/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db

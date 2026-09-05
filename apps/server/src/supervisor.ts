@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -447,7 +447,10 @@ export function main(): void {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const { requestTimeoutMs, childArgs } = parseSupervisorArgs(process.argv.slice(2));
   const childEntry = process.env.MCP_SUPERVISOR_CHILD_ENTRY ?? path.join(here, 'index.js');
-  const stateFile = process.env.MCP_SUPERVISOR_STATE_FILE ?? path.join(here, '..', '.chatgpt-machine', 'supervisor.json');
+  const pilotSupervisor = path.join(here, '..', '.pilot', 'supervisor.json');
+  const legacySupervisor = path.join(here, '..', '.chatgpt-machine', 'supervisor.json');
+  const defaultState = existsSync(pilotSupervisor) || !existsSync(legacySupervisor) ? pilotSupervisor : legacySupervisor;
+  const stateFile = process.env.MCP_SUPERVISOR_STATE_FILE ?? defaultState;
   const supervisor = new McpSupervisor({ childEntry, childArgs, requestTimeoutMs, restartDelayMs: RESTART_DELAY_MS, stateFile });
   process.once('SIGINT', () => supervisor.stop());
   process.once('SIGTERM', () => supervisor.stop());
