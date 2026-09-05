@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/mcp-tunnel-meme.png" alt="ChatGPT, OpenAI, and MCP Tunnel" width="750">
+</p>
+
 # ChatGPT Pilot
 
 [![CI/CD](https://github.com/JonusNattapong/chatgpt-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/JonusNattapong/chatgpt-pilot/actions/workflows/ci.yml)
@@ -14,10 +18,6 @@ It unifies four capabilities behind a single MCP connection:
 - **Cognitive Frameworks (`packages/thinkforge`)**: Analytical tools for structured divergence, convergence, assumption testing, and failure mode simulation.
 - **Skills Catalog (`packages/skill-hub`)**: Dynamic discovery and execution of curated procedures stored in `skills/`.
 - **Markdown Memory Engine (`packages/memory`)**: A file-based memory store that organizes documentation, project metadata, architectural decisions, and timelines into human-readable Markdown files without native database dependencies.
-
-<p align="center">
-  <img src="docs/assets/mcp-tunnel-meme.png" alt="ChatGPT, OpenAI, and MCP Tunnel" width="750">
-</p>
 
 ## System Architecture
 
