@@ -40,14 +40,14 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build All Workspace Packages
+        run: pnpm build
+
       - name: Typecheck Workspace
         run: pnpm typecheck
 
       - name: Run Test Suite
         run: pnpm test
-
-      - name: Build All Workspace Packages
-        run: pnpm build
 
       - name: Verify Zero-Config Hybrid Capability Surface
         run: pnpm check:hybrid
