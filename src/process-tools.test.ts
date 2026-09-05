@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { listManagedProcesses, processStatus, readProcessOutput, startProcess, stopProcess, writeProcessInput } from './process-tools.js';
+import { listManagedProcesses, processStatus, readProcessOutput, startProcess, stopProcess, waitProcess, writeProcessInput } from './process-tools.js';
 
 async function withRoot(prefix: string, body: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), prefix));
@@ -37,7 +37,7 @@ test('process output is bounded and offsets are monotonic', async () => {
     const access = { root, unrestricted: false };
     const started = await startProcess({
       ...access,
-      command: "node -e \"console.log('first'); setTimeout(()=>console.log('second'), 250); setTimeout(()=>{}, 6000)\"",
+      command: "node -e \"console.log('first'); process.stdin.once('data',()=>console.log('second')); setTimeout(()=>{}, 6000)\"",
     });
     try {
       const first = await readProcessOutput({ ...access, pid: started.pid, waitMs: 4000 });
@@ -45,6 +45,7 @@ test('process output is bounded and offsets are monotonic', async () => {
       assert.ok(first.nextStdoutOffset > 0);
       assert.ok(first.nextStderrOffset >= 0);
 
+      await writeProcessInput({ ...access, pid: started.pid, input: 'next\n' });
       const second = await readProcessOutput({
         ...access,
         pid: started.pid,
@@ -114,6 +115,55 @@ test('process registry persists offsets after stop (recovered read)', async () =
     // After stop the log file must still be readable via readProcessOutput.
     const recovered = await readProcessOutput({ ...access, pid: started.pid });
     assert.match(recovered.stdout, /recover-me/);
+  });
+});
+
+test('waitProcess waits for exit and returns the exit code and output offsets', async () => {
+  await withRoot('machine-mcp-proc-wait-', async (root) => {
+    const access = { root, unrestricted: false };
+    const started = await startProcess({
+      ...access,
+      command: "node -e \"setTimeout(()=>console.log('done'), 250)\"",
+    });
+    try {
+      const result = await waitProcess({ ...access, pid: started.pid, timeoutMs: 4_000 });
+      assert.equal(result.completed, true);
+      assert.equal(result.running, false);
+      assert.equal(result.timedOut, false);
+      assert.equal(result.exitCode, 0);
+      assert.ok(result.nextStdoutOffset > 0);
+      assert.ok(result.nextStderrOffset >= 0);
+
+      const output = await readProcessOutput({ ...access, pid: started.pid });
+      assert.match(output.stdout, /done/);
+      assert.equal(output.nextStdoutOffset, result.nextStdoutOffset);
+      assert.equal(output.nextStderrOffset, result.nextStderrOffset);
+    } finally {
+      await stopProcess({ ...access, pid: started.pid }).catch(() => undefined);
+    }
+  });
+});
+
+test('waitProcess times out without stopping the process', async () => {
+  await withRoot('machine-mcp-proc-wait-timeout-', async (root) => {
+    const access = { root, unrestricted: false };
+    const started = await startProcess({
+      ...access,
+      command: "node -e \"console.log('started'); setTimeout(()=>{}, 5000)\"",
+    });
+    try {
+      const result = await waitProcess({ ...access, pid: started.pid, timeoutMs: 100 });
+      assert.equal(result.completed, false);
+      assert.equal(result.running, true);
+      assert.equal(result.timedOut, true);
+      assert.equal(result.exitCode, null);
+      assert.ok(result.nextStdoutOffset >= 0);
+
+      const status = await processStatus({ ...access, pid: started.pid });
+      assert.equal(status.running, true);
+    } finally {
+      await stopProcess({ ...access, pid: started.pid }).catch(() => undefined);
+    }
   });
 });
 

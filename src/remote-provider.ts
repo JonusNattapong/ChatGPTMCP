@@ -19,6 +19,8 @@ export interface RemoteProviderOptions {
   adapter: RemoteMcpAdapter;
   /** Override only when an existing integration requires a different public namespace. */
   publicName?: (providerId: string, remoteToolName: string) => string;
+  /** Optional explicit allow-list. Missing requested tools fail startup to catch provider contract drift. */
+  includeTools?: readonly string[];
 }
 
 function defaultPublicName(providerId: string, remoteToolName: string): string {
@@ -55,7 +57,15 @@ function validateRemoteToolName(name: string): void {
 export async function createRemoteMcpProvider(options: RemoteProviderOptions): Promise<ToolProvider> {
   validateProviderId(options.id);
   const publicName = options.publicName ?? defaultPublicName;
-  const remoteTools = await options.adapter.discoverTools();
+  const discovered = await options.adapter.discoverTools();
+  const byRemoteName = new Map(discovered.map((tool) => [tool.name, tool]));
+  const remoteTools = options.includeTools
+    ? options.includeTools.map((name) => {
+        const tool = byRemoteName.get(name);
+        if (!tool) throw new Error(`Remote provider ${options.id} is missing required tool "${name}".`);
+        return tool;
+      })
+    : discovered;
   const specs: ToolSpec[] = remoteTools.map((remote) => {
     validateRemoteToolName(remote.name);
     const name = publicName(options.id, remote.name);

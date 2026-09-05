@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -28,6 +29,7 @@ import {
   readProcessOutput,
   startProcess,
   stopProcess,
+  waitProcess,
   writeProcessInput,
 } from './process-tools.js';
 import {
@@ -44,8 +46,20 @@ import {
 import { diskInfo, environmentInfo, listPorts, listProcesses, networkInfo, systemInfo } from './system-tools.js';
 import { gitCommitVerified, verifyChanges, type VerificationProfile } from './verification.js';
 import { createMachineRoutingSpecs } from './machine-router.js';
+import { PersistentIpythonRuntime, type RuntimeCapability } from './runtime-exec.js';
+import { osintFetch, osintSearch, type OsintScope } from './osint.js';
 
 const execFileAsync = promisify(execFile);
+
+export interface ToolExecutionContext {
+  approvalGranted?: boolean;
+}
+
+export interface RuntimePolicyDecision {
+  allowed: boolean;
+  requiresApproval: boolean;
+  reason?: string;
+}
 
 export interface ToolContext extends MachineAccess {
   maxTimeoutMs: number;
@@ -53,6 +67,12 @@ export interface ToolContext extends MachineAccess {
   approvalMode?: string;
   audit?: AuditLogger;
   machinesFile?: string;
+  osintEnabled?: boolean;
+  torProxy?: string;
+  runtimeManager?: PersistentIpythonRuntime;
+  /** Additional provider capabilities made available behind runtime_exec/toolpy. */
+  runtimeCapabilities?: () => readonly ToolSpec[];
+  runtimePolicyCheck?: (spec: ToolSpec, args: Record<string, unknown>) => RuntimePolicyDecision;
 }
 
 export interface ToolSpec {
@@ -64,7 +84,7 @@ export interface ToolSpec {
     destructiveHint: boolean;
     openWorldHint: boolean;
   };
-  handler: (args: Record<string, unknown>) => Promise<unknown>;
+  handler: (args: Record<string, unknown>, execution?: ToolExecutionContext) => Promise<unknown>;
 }
 
 /*
@@ -168,6 +188,12 @@ function optionalVerificationProfile(args: Record<string, unknown>): Verificatio
   }
   return value as VerificationProfile;
 }
+
+function optionalOsintScope(args: Record<string, unknown>): 'web' | 'onion' {
+  const value = optionalString(args, 'scope') ?? 'web';
+  if (value !== 'web' && value !== 'onion') throw new ToolError('INVALID_ARGUMENT', '"scope" must be one of: web, onion.');
+  return value;
+}
 /**
  * External-tool probes are cached for the process lifetime: machine_status is
  * called often, and a missing binary does not appear mid-session.
@@ -199,6 +225,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
   const access: MachineAccess = { root: context.root, unrestricted: context.unrestricted };
   const open = context.unrestricted;
   const audit = context.audit ?? new AuditLogger(defaultAuditPath(context.root));
+  const runtimeManager = context.runtimeManager ?? new PersistentIpythonRuntime(context.root);
 
   const specs: ToolSpec[] = [
     {
@@ -837,11 +864,11 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       description: 'Get the status, runtime, and current output offsets for a managed background process.',
       inputSchema: {
         type: 'object',
-        properties: { pid: { type: 'integer', minimum: 1, description: 'Process ID returned by start_process.' } },
+        properties: { pid: { type: 'integer', minimum: 1, description: 'Process ID returned by start_process.' }, process_id: { type: 'string', description: 'Opaque processId returned by start_process; detects stale PID references.' } },
         required: ['pid'],
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      handler: async (args) => processStatus({ ...access, pid: optionalInteger(args, 'pid') ?? Number.NaN }),
+      handler: async (args) => processStatus({ ...access, pid: optionalInteger(args, 'pid') ?? Number.NaN, processId: optionalString(args, 'process_id') }),
     },
     {
       name: 'read_process_output',
@@ -850,6 +877,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         type: 'object',
         properties: {
           pid: { type: 'integer', minimum: 1, description: 'Process ID returned by start_process.' },
+          process_id: { type: 'string', description: 'Opaque processId returned by start_process; detects stale PID references.' },
           since_stdout: { type: 'integer', minimum: 0, description: 'Return stdout produced after this offset.' },
           since_stderr: { type: 'integer', minimum: 0, description: 'Return stderr produced after this offset.' },
           wait_ms: { type: 'integer', minimum: 0, maximum: 60000, description: 'Wait up to this long for new output or process exit.' },
@@ -859,7 +887,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       handler: async (args) => readProcessOutput({
         ...access,
-        pid: optionalInteger(args, 'pid') ?? Number.NaN,
+        pid: optionalInteger(args, 'pid') ?? Number.NaN, processId: optionalString(args, 'process_id'),
         sinceStdout: optionalInteger(args, 'since_stdout'),
         sinceStderr: optionalInteger(args, 'since_stderr'),
         waitMs: optionalInteger(args, 'wait_ms'),
@@ -872,6 +900,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         type: 'object',
         properties: {
           pid: { type: 'integer', minimum: 1, description: 'Process ID returned by start_process.' },
+          process_id: { type: 'string', description: 'Opaque processId returned by start_process; detects stale PID references.' },
           input: { type: 'string', description: 'UTF-8 text to write to standard input.' },
           end: { type: 'boolean', description: 'Close standard input after writing; defaults to false.' },
         },
@@ -880,9 +909,37 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
       handler: async (args) => writeProcessInput({
         ...access,
-        pid: optionalInteger(args, 'pid') ?? Number.NaN,
+        pid: optionalInteger(args, 'pid') ?? Number.NaN, processId: optionalString(args, 'process_id'),
         input: requireText(args, 'input'),
         end: optionalBoolean(args, 'end'),
+      }),
+    },
+    {
+      name: 'process_wait',
+      description: 'Wait until a managed background process exits or the timeout expires. Returns the exit code and output offsets without requiring repeated process_status calls; a timeout does not stop the process.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pid: { type: 'integer', minimum: 1, description: 'Process ID returned by start_process.' },
+          process_id: { type: 'string', description: 'Opaque processId returned by start_process; detects stale PID references.' },
+          include_output: { type: 'boolean', description: 'Include a bounded stdout/stderr page with the exit status.' },
+          max_output_bytes: { type: 'integer', minimum: 4, maximum: 4194304 },
+          since_stdout: { type: 'integer', minimum: 0 },
+          since_stderr: { type: 'integer', minimum: 0 },
+          timeout_ms: { type: 'integer', minimum: 100, maximum: context.maxTimeoutMs, description: 'Maximum time to wait. Defaults to 30000 ms.' },
+        },
+        required: ['pid'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      handler: async (args) => waitProcess({
+        ...access,
+        pid: optionalInteger(args, 'pid') ?? Number.NaN, processId: optionalString(args, 'process_id'),
+        timeoutMs: optionalInteger(args, 'timeout_ms') ?? Math.min(30_000, context.maxTimeoutMs),
+        maxTimeoutMs: context.maxTimeoutMs,
+        includeOutput: optionalBoolean(args, 'include_output'),
+        maxOutputBytes: optionalInteger(args, 'max_output_bytes'),
+        sinceStdout: optionalInteger(args, 'since_stdout'),
+        sinceStderr: optionalInteger(args, 'since_stderr'),
       }),
     },
     {
@@ -890,11 +947,11 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       description: 'Stop a managed background process and its child tree by PID.',
       inputSchema: {
         type: 'object',
-        properties: { pid: { type: 'integer', minimum: 1, description: 'Process ID returned by start_process.' } },
+        properties: { pid: { type: 'integer', minimum: 1, description: 'Process ID returned by start_process.' }, process_id: { type: 'string', description: 'Opaque processId returned by start_process; detects stale PID references.' } },
         required: ['pid'],
       },
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-      handler: async (args) => stopProcess({ ...access, pid: optionalInteger(args, 'pid') ?? Number.NaN }),
+      handler: async (args) => stopProcess({ ...access, pid: optionalInteger(args, 'pid') ?? Number.NaN, processId: optionalString(args, 'process_id') }),
     },
     {
       name: 'apply_patch',
@@ -905,6 +962,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         type: 'object',
         properties: {
           patch: { type: 'string', description: 'Patch beginning with *** Begin Patch and ending with *** End Patch.' },
+          expected_sha256: { type: 'object', additionalProperties: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' }, description: 'When supplied, must cover every updated/deleted source path with its read-time SHA-256.' },
           dry_run: { type: 'boolean', description: 'Validate and report changes without writing files.' },
         },
         required: ['patch'],
@@ -912,7 +970,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
       handler: async (args) => {
         const dryRun = optionalBoolean(args, 'dry_run') === true;
-        return { changed: await applyFilePatch(access, requireText(args, 'patch'), dryRun), dryRun };
+        return { changed: await applyFilePatch(access, requireText(args, 'patch'), dryRun, optionalStringRecord(args, 'expected_sha256')), dryRun };
       },
     },
     {
@@ -923,6 +981,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         properties: {
           path: { type: 'string', description: 'Project directory; defaults to the workspace.' },
           profile: { type: 'string', enum: ['fast', 'normal', 'strict'], description: 'Verification depth; defaults to normal.' },
+          total_timeout_ms: { type: 'integer', minimum: 1000, maximum: 660000, description: 'Total verification budget across all checks; defaults to timeout_ms. Cleanup may take a bounded grace period.' },
           timeout_ms: { type: 'integer', minimum: 1000, maximum: 660000, description: 'Timeout per verification command.' },
         },
       },
@@ -932,6 +991,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         path: optionalString(args, 'path'),
         profile: optionalVerificationProfile(args),
         timeoutMs: optionalInteger(args, 'timeout_ms') ?? context.maxTimeoutMs,
+        totalTimeoutMs: optionalInteger(args, 'total_timeout_ms'),
       }),
     },
     {
@@ -1050,6 +1110,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
           paths: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Explicit repository paths to include.' },
           message: { type: 'string', description: 'Commit message.' },
           profile: { type: 'string', enum: ['fast', 'normal', 'strict'], description: 'Verification depth; defaults to normal.' },
+          total_timeout_ms: { type: 'integer', minimum: 1000, maximum: 660000, description: 'Total verification budget across all checks; defaults to timeout_ms. Cleanup may take a bounded grace period.' },
           timeout_ms: { type: 'integer', minimum: 1000, maximum: 660000, description: 'Timeout per verification command.' },
         },
         required: ['paths', 'message'],
@@ -1062,6 +1123,7 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
         message: requireString(args, 'message'),
         profile: optionalVerificationProfile(args),
         timeoutMs: optionalInteger(args, 'timeout_ms') ?? context.maxTimeoutMs,
+        totalTimeoutMs: optionalInteger(args, 'total_timeout_ms'),
       }),
     },
     {
@@ -1096,10 +1158,174 @@ export function createToolSpecs(context: ToolContext): ToolSpec[] {
     },
   ];
 
+  if (context.osintEnabled) {
+    specs.push({
+      name: 'osint_search',
+      description: 'Search public web indexes for OSINT leads. onion scope uses the Ahmia public index and returns links only; it does not log in, submit forms, or crawl.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', minLength: 1, maxLength: 500 },
+          scope: { type: 'string', enum: ['web', 'onion'], description: 'web for clearnet results; onion for public .onion links indexed by Ahmia.' },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: context.maxTimeoutMs },
+        },
+        required: ['query'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      handler: async (args) => osintSearch(
+        requireString(args, 'query'),
+        optionalOsintScope(args) as OsintScope,
+        optionalInteger(args, 'timeout_ms') ?? Math.min(30_000, context.maxTimeoutMs),
+        context.torProxy,
+      ),
+    });
+    specs.push({
+      name: 'osint_fetch',
+      description: 'Fetch and extract bounded text, title, and links from a public HTTPS page. .onion URLs require a local Tor SOCKS5 proxy; cookies, credentials, binary downloads, and redirects outside the requested scope are rejected.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Absolute HTTPS URL. Use scope=onion for .onion hosts.' },
+          scope: { type: 'string', enum: ['web', 'onion'] },
+          timeout_ms: { type: 'integer', minimum: 1000, maximum: context.maxTimeoutMs },
+        },
+        required: ['url'],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      handler: async (args) => osintFetch({
+        url: requireString(args, 'url'),
+        scope: optionalOsintScope(args) as OsintScope,
+        timeoutMs: optionalInteger(args, 'timeout_ms') ?? Math.min(30_000, context.maxTimeoutMs),
+        torProxy: context.torProxy,
+      }),
+    });
+  }
+
   specs.push(...createMachineRoutingSpecs({
     machinesFile: context.machinesFile,
     timeoutMs: context.maxTimeoutMs,
   }));
+
+  specs.push({
+    name: 'runtime_exec',
+    description: 'Execute model-generated Python in a persistent IPython/Jupyter kernel. Variables, imports, and helper functions survive across calls sharing session_id. Use await tools.<name>(...) or await call(name, args) for MCP capabilities, await describe() for the declared catalog, and result(value) to return structured data. The kernel is an unrestricted control environment, not a sandbox, so this tool is available only with --dangerously-open-machine.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', maxLength: 262144, description: 'Python/IPython cell source. Top-level await is supported. Use result(value) for a structured result.' },
+        session_id: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,64}$', description: 'Persistent kernel namespace. Defaults to default. State survives until reset, idle eviction, worker restart, or timeout termination.' },
+        reset_session: { type: 'boolean', description: 'Terminate any existing kernel for session_id before executing this cell.' },
+        allow_tools: { type: 'array', maxItems: 64, items: { type: 'string' }, description: 'Exact MCP capabilities callable from this cell. Defaults to all read-only capabilities. Mutating capabilities must be explicitly declared.' },
+        timeout_ms: { type: 'integer', minimum: 1000, maximum: context.maxTimeoutMs, description: 'Cell execution limit; defaults to 30000 ms. A timeout terminates the session to guarantee cleanup.' },
+        max_calls: { type: 'integer', minimum: 1, maximum: 256, description: 'Maximum MCP capability calls from this cell; defaults to 32.' },
+        max_output_bytes: { type: 'integer', minimum: 1024, maximum: 4194304, description: 'Maximum captured stdout/stderr/display output for this cell; defaults to 1048576.' },
+      },
+      required: ['code'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+    handler: async (args, execution) => {
+      if (!context.unrestricted) {
+        throw new ToolError(
+          'POLICY_DENIED',
+          'runtime_exec requires --dangerously-open-machine because a persistent IPython kernel has the worker operating-system permissions.',
+          'Use the ordinary bounded MCP tools in workspace-only mode, or run the bridge inside an external sandbox before enabling runtime_exec.',
+        );
+      }
+      const code = requireText(args, 'code');
+      const requested = optionalStringArray(args, 'allow_tools');
+      if (requested && requested.length > 64) throw new ToolError('INVALID_ARGUMENT', '"allow_tools" accepts at most 64 capability names.');
+      const localCallableSpecs = specs.filter((spec) => spec.name !== 'runtime_exec');
+      const externalCallableSpecs = [...(context.runtimeCapabilities?.() ?? [])]
+        .filter((spec) => spec.name !== 'runtime_exec' && spec.name !== 'toolpy');
+      const byName = new Map<string, ToolSpec>();
+      for (const spec of [...localCallableSpecs, ...externalCallableSpecs]) {
+        const existing = byName.get(spec.name);
+        if (existing && existing !== spec) {
+          throw new ToolError('INTERNAL', `Duplicate runtime capability: ${spec.name}.`);
+        }
+        byName.set(spec.name, spec);
+      }
+      const callableSpecs = [...byName.values()];
+      const defaultAllowed = callableSpecs
+        .filter((spec) => spec.annotations.readOnlyHint
+          || (!spec.annotations.destructiveHint && !spec.annotations.openWorldHint))
+        .map((spec) => spec.name);
+      const allowedNames = [...new Set(requested ?? defaultAllowed)];
+      for (const name of allowedNames) {
+        if (!byName.has(name)) {
+          throw new ToolError(
+            'UNKNOWN_TOOL',
+            `Unknown runtime capability: ${name}.`,
+            'Call runtime_exec with code="result(await describe())" to inspect the default read-only catalog, or use the normal MCP tool list outside runtime-only mode.',
+          );
+        }
+      }
+      const capabilities: RuntimeCapability[] = callableSpecs.map((spec) => ({
+        name: spec.name,
+        description: spec.description,
+        inputSchema: spec.inputSchema,
+        annotations: spec.annotations,
+      }));
+      return runtimeManager.execute({
+        code,
+        sessionId: optionalString(args, 'session_id') ?? 'default',
+        resetSession: optionalBoolean(args, 'reset_session'),
+        allowedTools: new Set(allowedNames),
+        capabilities,
+        timeoutMs: optionalInteger(args, 'timeout_ms') ?? Math.min(30_000, context.maxTimeoutMs),
+        maxCalls: optionalInteger(args, 'max_calls') ?? 32,
+        maxOutputBytes: optionalInteger(args, 'max_output_bytes') ?? 1024 * 1024,
+        invoke: async (name, nestedArgs) => {
+          const nestedSpec = byName.get(name);
+          if (!nestedSpec) throw new ToolError('UNKNOWN_TOOL', `Unknown runtime capability: ${name}.`);
+          const decision = context.runtimePolicyCheck?.(nestedSpec, nestedArgs) ?? { allowed: true, requiresApproval: false };
+          if (!decision.allowed) throw new ToolError('POLICY_DENIED', decision.reason ?? `Runtime capability ${name} was denied by policy.`);
+          if (decision.requiresApproval && execution?.approvalGranted !== true) {
+            throw new ToolError(
+              'APPROVAL_REQUIRED',
+              `Runtime capability ${name} requires approval under policy ${context.policyName ?? 'current'}.`,
+              'Approve the outer runtime_exec request or call the capability directly.',
+            );
+          }
+          const traceId = randomUUID();
+          const startedAt = Date.now();
+          try {
+            const result = await nestedSpec.handler(nestedArgs, { approvalGranted: execution?.approvalGranted });
+            const failed = name === 'shell_command'
+              && (result as { promotedToBackground?: boolean }).promotedToBackground !== true
+              && ((result as { success?: boolean }).success === false
+                || (result as { expectationMet?: boolean }).expectationMet === false
+                || (result as { exitCode?: number | null }).exitCode !== 0
+                || (result as { timedOut?: boolean }).timedOut === true);
+            await audit.write({
+              traceId,
+              tool: name,
+              policy: context.policyName ?? 'admin',
+              decision: decision.requiresApproval ? 'approval_required' : 'allowed',
+              status: failed ? 'error' : 'success',
+              durationMs: Date.now() - startedAt,
+              args: { ...nestedArgs, runtime_parent: 'runtime_exec' },
+              errorCode: failed ? 'COMMAND_FAILED' : undefined,
+            });
+            return result;
+          } catch (error: unknown) {
+            const described = describeError(error);
+            await audit.write({
+              traceId,
+              tool: name,
+              policy: context.policyName ?? 'admin',
+              decision: decision.requiresApproval ? 'approval_required' : 'allowed',
+              status: 'error',
+              durationMs: Date.now() - startedAt,
+              args: { ...nestedArgs, runtime_parent: 'runtime_exec' },
+              errorCode: described.code,
+            });
+            throw error;
+          }
+        },
+      });
+    },
+  });
 
   return specs;
 }

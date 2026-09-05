@@ -1,12 +1,12 @@
-﻿# AGENTS.md
+# AGENTS.md
 
 Repository instructions for coding agents working in `ChatGPTMCP`.
 
 ## Project intent
 
-`chatgpt-machine-mcp` is a small local MCP server that intentionally exposes high-authority machine operations.
+`chatgpt-machine-mcp` is a local capability runtime for ChatGPT. It keeps high-authority machine operations behind explicit policy/audit boundaries and can present either the full legacy surface or a compact Hybrid surface.
 
-Keep the implementation narrow. The public contract is forty-four tools:
+Keep the implementation narrow. Legacy mode preserves the forty-six-tool public contract:
 
 1. `machine_status`
 2. `system_info`
@@ -34,41 +34,44 @@ Keep the implementation narrow. The public contract is forty-four tools:
 24. `process_status`
 25. `read_process_output`
 26. `process_write`
-27. `stop_process`
-28. `apply_patch`
-29. `verify_changes`
-30. `git_status`
-31. `git_diff`
-32. `git_log`
-33. `git_show`
-34. `git_branch`
-35. `git_add`
-36. `git_commit`
-37. `git_commit_verified`
-38. `git_checkout`
-39. `git_push`
-40. `machines_list`
-41. `machine_probe`
-42. `machine_tools`
-43. `machine_read`
-44. `machine_call`
+27. `process_wait`
+28. `stop_process`
+29. `apply_patch`
+30. `verify_changes`
+31. `git_status`
+32. `git_diff`
+33. `git_log`
+34. `git_show`
+35. `git_branch`
+36. `git_add`
+37. `git_commit`
+38. `git_commit_verified`
+39. `git_checkout`
+40. `git_push`
+41. `machines_list`
+42. `machine_probe`
+43. `machine_tools`
+44. `machine_read`
+45. `machine_call`
+46. `runtime_exec`
 
-Do not introduce orchestration, planning, memory, agent delegation, or a generic task framework into this repository unless a concrete requirement demands it. This project is infrastructure plumbing, not an agent harness.
+Do not turn this repository into an autonomous agent harness. ChatGPT remains the orchestrator. Hybrid mode may attach bounded capability providers such as Skills, Think, or Memory behind `toolpy`, but provider integration must remain infrastructure plumbing: explicit capabilities, stable schemas, policy/audit enforcement, bounded execution, and no hidden autonomous planning loop.
 
 ## Source of truth
 
 Treat these files as authoritative, in this order:
 
-1. `src/tools.ts` — the 44-tool registry: schema, description, argument validation, and handler for every tool.
-2. `src/contract.ts` — the versioned public tool contract and deterministic contract fingerprint.
-3. `src/supervisor.ts` — the tunnel-facing stdio worker boundary, hard deadline, restart/reinitialize logic, and supervisor state.
-4. `src/index.ts` — MCP worker, transports, HTTP authentication/readiness, policy gates, and the shared result envelope.
-5. `src/config.ts` and `src/cli.ts` — local operator configuration and `chatgpt-local` lifecycle/diagnostics.
-6. `src/errors.ts` — `ToolError` and the stable `error.code` vocabulary.
-7. `src/file-tools.ts`, `src/shell-tools.ts`, `src/process-tools.ts`, `src/git-tools.ts`, `src/system-tools.ts`, and `src/verification.ts` — host operations and verified execution behind the registry and policy boundary.
-8. `scripts/*.ps1` and `scripts/*.sh` — local Secure MCP Tunnel lifecycle and installer helpers on Windows, macOS, Ubuntu, and WSL.
-9. tests — executable contract and recovery/portability gates.
-10. `README.md`, `README.th.md`, `docs/*.html`, and `docs/*.svg` — human-facing description of the above.
+1. `src/tools.ts` — the legacy 46-tool registry and the capability implementation behind `runtime_exec` / `toolpy`.
+2. `src/gateway.ts`, `src/hybrid-provider.ts`, `src/remote-provider.ts`, and transport adapters — public-surface routing and provider-backed capability composition.
+3. `src/contract.ts` — the versioned public tool contract and deterministic contract fingerprint.
+4. `src/supervisor.ts` — the tunnel-facing stdio worker boundary, hard deadline, restart/reinitialize logic, and supervisor state.
+5. `src/index.ts` — MCP worker, transports, HTTP authentication/readiness, policy gates, and the shared result envelope.
+6. `src/config.ts` and `src/cli.ts` — local operator configuration and `chatgpt-local` lifecycle/diagnostics.
+7. `src/errors.ts` — `ToolError` and the stable `error.code` vocabulary.
+8. `src/file-tools.ts`, `src/shell-tools.ts`, `src/process-tools.ts`, `src/git-tools.ts`, `src/system-tools.ts`, and `src/verification.ts` — host operations and verified execution behind the registry and policy boundary.
+9. `scripts/*.ps1` and `scripts/*.sh` — local Secure MCP Tunnel lifecycle and installer helpers on Windows, macOS, Ubuntu, and WSL.
+10. tests — executable contract and recovery/portability gates.
+11. `README.md`, `README.th.md`, `docs/*.html`, and `docs/*.svg` — human-facing description of the above.
 
 Tool definitions and handlers must stay together in `src/tools.ts`. `machine_status` derives its tool list from that registry; do not reintroduce a hand-maintained copy.
 
@@ -104,7 +107,7 @@ The public MCP surface is deliberately small.
 - `machine_status` must remain read-only.
 - `read_file`, `read_files`, `project_snapshot`, `list_directory`, `find_files`, `file_info`, `image_info`, and `search_code` are read-only.
 - `save_image_from_url` is destructive/open-world because it performs network I/O and writes a file.
-- `start_process`, `process_write`, and `stop_process` are destructive; `process_status` and `read_process_output` are read-only.
+- `start_process`, `process_write`, and `stop_process` are destructive; `process_status`, `read_process_output`, and `process_wait` are read-only.
 - `git_status`, `git_diff`, `git_log`, `git_show`, and `git_branch` are read-only; Git mutations must remain policy-aware and approval-gated where configured.
 - `system_info`, `list_processes`, `list_ports`, `environment_info`, `disk_info`, `network_info`, `audit_recent`, and `audit_search` are read-only.
 - `write_file`, `edit_file`, and `update_file` are destructive but not open-world by annotation.
@@ -115,6 +118,7 @@ The public MCP surface is deliberately small.
 - `machines_list` is local/read-only; `machine_probe`, `machine_tools`, and `machine_read` are read-only/open-world because they contact allowlisted remote nodes.
 - `machine_read` must verify the remote tool's current cached/discovered `readOnlyHint=true` annotation before execution and fail closed for missing or mutating annotations.
 - `machine_call` is destructive/open-world and remains approval-gated by the developer policy.
+- `runtime_exec` is destructive/open-world, executes model-generated Python in a persistent IPython kernel, requires `--dangerously-open-machine`, and permits caller-specified capability invocation.
 - changing tool names or argument schemas is a breaking integration change.
 
 Do not add a tool that simply wraps a shell command unless it creates a meaningful security, reliability, or schema boundary.

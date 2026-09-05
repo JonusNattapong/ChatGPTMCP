@@ -126,3 +126,33 @@ test('verified commit rolls staging back if commit itself is rejected', async (t
     assert.equal(status.summary.unstaged, 1);
   });
 });
+
+test('verification detects Python projects and parses diagnostics', async () => {
+  await withRoot('machine-verify-python-', async (root) => {
+    await writeFile(path.join(root, 'pyproject.toml'), '[tool.ruff]\nline-length = 88\n');
+    const access = { root, unrestricted: false };
+    const fast = await verifyChanges({ ...access, profile: 'fast', timeoutMs: 10_000 });
+    assert.equal(fast.projectType, 'python');
+    assert.deepEqual(fast.checks.map((c) => c.name), ['ruff check']);
+
+    const normal = await verifyChanges({ ...access, profile: 'normal', timeoutMs: 10_000 });
+    assert.equal(normal.projectType, 'python');
+    assert.deepEqual(normal.checks.map((c) => c.name), ['ruff check', 'python -m pytest']);
+  });
+
+  const { parseDiagnostics } = await import('./verification.js');
+  const parsed = parseDiagnostics([
+    'src/app.py(10,5): error TS2322: Type error',
+    '  File "test_example.py", line 42, in test_fn',
+    'FAILED test_mod.py::test_case - AssertionError: failed',
+    'module/sub.py:15:20: E501 line too long',
+  ].join('\n'));
+  assert.equal(parsed.length, 4);
+  assert.equal(parsed[0].code, 'TS2322');
+  assert.equal(parsed[1].file, 'test_example.py');
+  assert.equal(parsed[1].line, 42);
+  assert.equal(parsed[2].code, 'test_case');
+  assert.equal(parsed[3].file, 'module/sub.py');
+  assert.equal(parsed[3].line, 15);
+  assert.equal(parsed[3].column, 20);
+});

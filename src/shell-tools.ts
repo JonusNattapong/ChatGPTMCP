@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -188,6 +189,13 @@ export async function runShellCommand(options: ShellCommandOptions): Promise<She
   const maxOutputBytes = options.maxOutputBytes ?? MAX_OUTPUT_BYTES;
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 1024 || maxOutputBytes > MAX_OUTPUT_BYTES) {
     throw new ToolError('INVALID_ARGUMENT', `"max_output_bytes" must be an integer between 1024 and ${MAX_OUTPUT_BYTES}.`);
+  }
+
+  if (!options.unrestricted) {
+    const dangerous = /(?:^|[;&|\s])(?:rm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+(?:\/|\/\*|[a-zA-Z]:\\?)|rmdir(?:\s+\/[a-zA-Z])+\s+[a-zA-Z]:\\?|format\s+[a-zA-Z]:|mkfs(?:\.[a-z0-9]+)?\s+|dd\s+[^;|\n]*of=\/dev\/(?:sd|nvme|hd))/i;
+    if (dangerous.test(options.command)) {
+      throw new ToolError('POLICY_DENIED', 'Catastrophic destructive command blocked by workspace guardrail.', 'Dangerous disk-formatting and root-deletion commands require --dangerously-open-machine.');
+    }
   }
 
   const workdir = await resolveMachinePath(options, options.workdir || '.', true);
@@ -393,10 +401,17 @@ function applyUpdate(original: string, patchLines: string[], filePath: string): 
   return fileLines.join(eol) + (trailingNewline ? eol : '');
 }
 
-export async function applyFilePatch(accessConfig: MachineAccess, patchText: string, dryRun = false): Promise<string[]> {
+export async function applyFilePatch(accessConfig: MachineAccess, patchText: string, dryRun = false, expectedHashes?: Record<string, string>): Promise<string[]> {
   const operations = parsePatch(patchText);
-  const prepared: Array<PatchOperation & { source: string; destination?: string; content?: string }> = [];
+  const prepared: Array<PatchOperation & { source: string; destination?: string; content?: string; originalHash?: string }> = [];
   const claimedPaths = new Set<string>();
+  const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+  if (expectedHashes) {
+    for (const [file, value] of Object.entries(expectedHashes)) {
+      if (!/^[a-f0-9]{64}$/i.test(value) || !operations.some(op => op.filePath === file && op.kind !== 'add')) throw new ToolError('INVALID_ARGUMENT', 'expected_sha256 must map updated/deleted source paths to SHA-256 hashes.');
+    }
+    for (const operation of operations) if (operation.kind !== 'add' && !Object.hasOwn(expectedHashes, operation.filePath)) throw new ToolError('INVALID_ARGUMENT', `Missing expected hash for ${operation.filePath}.`);
+  }
 
   for (const operation of operations) {
     const source = await resolveMachinePath(accessConfig, operation.filePath);
@@ -441,17 +456,20 @@ export async function applyFilePatch(accessConfig: MachineAccess, patchText: str
     }
 
     const original = await readFile(source, 'utf8');
+    const originalHash = hash(original);
+    if (expectedHashes && expectedHashes[operation.filePath].toLowerCase() !== originalHash) throw new ToolError('PRECONDITION_FAILED', `File changed: ${operation.filePath}`, 'Read all affected files again before retrying.');
     if (operation.kind === 'delete') {
       if (operation.lines.some((line) => line !== '')) {
         throw new ToolError('PATCH_INVALID', `Delete operation must not contain content: ${operation.filePath}`);
       }
-      prepared.push({ ...operation, source });
+      prepared.push({ ...operation, source, originalHash });
     } else {
       prepared.push({
         ...operation,
         source,
         destination,
         content: applyUpdate(original, operation.lines, operation.filePath),
+        originalHash,
       });
     }
   }
@@ -463,21 +481,38 @@ export async function applyFilePatch(accessConfig: MachineAccess, patchText: str
       : `${operation.kind === 'add' ? 'added' : 'updated'} ${operation.filePath}`;
   if (dryRun) return prepared.map(describe);
 
+  const check = async (operation: (typeof prepared)[number]) => {
+    if (await resolveMachinePath(accessConfig, operation.filePath) !== operation.source) throw new ToolError('PRECONDITION_FAILED', 'Patch path changed during preparation.');
+    if (operation.originalHash && hash(await readFile(operation.source, 'utf8')) !== operation.originalHash) throw new ToolError('PRECONDITION_FAILED', `File changed during patch preparation: ${operation.filePath}`);
+    if (operation.destination && await resolveMachinePath(accessConfig, operation.moveTo!) !== operation.destination) throw new ToolError('PRECONDITION_FAILED', 'Move destination changed during preparation.');
+  };
+  // Validate every source before the first write, and again immediately before its own mutation.
+  for (const operation of prepared) await check(operation);
   const changed: string[] = [];
   for (const operation of prepared) {
-    if (operation.kind === 'delete') {
-      await rm(operation.source);
-      changed.push(`deleted ${operation.filePath}`);
-    } else {
-      await mkdir(path.dirname(operation.source), { recursive: true });
-      await writeFile(operation.source, operation.content!, 'utf8');
-      if (operation.destination) {
-        await mkdir(path.dirname(operation.destination), { recursive: true });
-        await rename(operation.source, operation.destination);
-        changed.push(`moved ${operation.filePath} -> ${operation.moveTo}`);
+    let mutationStarted = false;
+    try {
+      await check(operation);
+      if (operation.kind === 'delete') {
+        mutationStarted = true;
+        await rm(operation.source);
       } else {
-        changed.push(`${operation.kind === 'add' ? 'added' : 'updated'} ${operation.filePath}`);
+        const target = operation.destination ?? operation.source;
+        await mkdir(path.dirname(target), { recursive: true });
+        mutationStarted = true;
+        // Exclusive creation ensures add/move never overwrite a newly created destination.
+        await writeFile(target, operation.content!, { encoding: 'utf8', flag: operation.kind === 'add' || operation.destination ? 'wx' : 'w' });
+        if (operation.destination) await rm(operation.source);
       }
+      changed.push(describe(operation));
+    } catch (error) {
+      if (!changed.length && !mutationStarted) throw error;
+      throw new ToolError('PATCH_PARTIAL_FAILURE', 'Patch did not finish; inspect the reported paths before retrying.',
+        'Filesystem patches are not multi-file atomic transactions.', {
+          completed: changed, failedPath: operation.filePath,
+          possiblyChanged: mutationStarted ? [operation.source, ...(operation.destination ? [operation.destination] : [])] : [],
+          cause: error instanceof Error ? error.message : String(error),
+        });
     }
   }
   return changed;

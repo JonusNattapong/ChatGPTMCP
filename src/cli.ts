@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { configEnvironment, initLocalConfig, loadLocalConfig, localConfigPath, setWorkspaceRoot, type LocalConfig } from './config.js';
@@ -16,11 +16,13 @@ type Command = 'setup' | 'up' | 'down' | 'restart' | 'status' | 'use' | 'workspa
 export function normalizeCommand(value: string | undefined): string {
   if (value === undefined || value === '--help' || value === '-h') return 'help';
   if (value === '--version' || value === '-v') return 'version';
+  if (value === 'start' || value === 'on') return 'up';
+  if (value === 'stop' || value === 'off') return 'down';
   return value;
 }
 
 export function usage(): string {
-  return `chatgpt-local ${APP_VERSION}\n\nUsage:\n  chatgpt-local setup\n  chatgpt-local up\n  chatgpt-local down\n  chatgpt-local restart\n  chatgpt-local status\n  chatgpt-local use <path>\n  chatgpt-local workspace [path]\n  chatgpt-local machine list\n  chatgpt-local machine add <id> <host[:port]|url> [--token-env VAR] [--name NAME] [--hostname HOST] [--alias VALUE]\n  chatgpt-local machine remove <id>\n  chatgpt-local doctor\n  chatgpt-local check\n  chatgpt-local config [show|init|reset]\n  chatgpt-local version\n\n`;
+  return `chatgpt-local ${APP_VERSION}\n\nUsage:\n  chatgpt-local setup\n  chatgpt-local up\n  chatgpt-local start   (alias: on; starts the tunnel)\n  chatgpt-local down\n  chatgpt-local stop    (alias: off; stops tunnel and watchdog)\n  chatgpt-local restart\n  chatgpt-local status\n  chatgpt-local use <path>\n  chatgpt-local workspace [path]\n  chatgpt-local machine list\n  chatgpt-local machine add <id> <host[:port]|url> [--token-env VAR] [--name NAME] [--hostname HOST] [--alias VALUE]\n  chatgpt-local machine remove <id>\n  chatgpt-local doctor\n  chatgpt-local check\n  chatgpt-local config [show|init|reset]\n  chatgpt-local version\n\n`;
 }
 
 export function run(program: string, args: string[], cwd = projectRoot, env?: NodeJS.ProcessEnv): Promise<void> {
@@ -257,7 +259,7 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   main().catch((error) => {
     process.stderr.write(`chatgpt-local: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

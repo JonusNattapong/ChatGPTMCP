@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ToolSpec } from './tools.js';
 
-export const CONTRACT_VERSION = 4;
+export const CONTRACT_VERSION = 6;
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -26,3 +26,4 @@ export function createContractManifest(specs: ToolSpec[]) {
     .digest('hex');
   return { contractVersion: CONTRACT_VERSION, fingerprint, tools };
 }
+

@@ -80,6 +80,8 @@ chatgpt-local status
 ```text
 chatgpt-local up
 chatgpt-local down
+chatgpt-local start   # เปิด Tunnel (ใช้ on หรือ up ได้)
+chatgpt-local stop    # ปิด Tunnel และ watchdog (ใช้ off หรือ down ได้)
 chatgpt-local restart
 chatgpt-local status
 chatgpt-local machine list
@@ -130,14 +132,38 @@ chatgpt-local restart   # build ใหม่ แล้ว stop/start tunnel
 
 ```powershell
 chatgpt-local doctor          # ตรวจ dependencies + permission ของ workspace
-chatgpt-local check           # ตรวจ effective config + fingerprint ของ contract v4 / 44 tools
+chatgpt-local check           # ตรวจ effective config + fingerprint ของ contract v6 / 46 tools
 npm run smoke                 # ทดสอบ MCP จริง + supervisor recovery
 npm run verify                # full test + server contract check
 # Preview mutation ทั้งหมดโดยไม่เขียนจริง:
 node dist/index.js --root D:\Projects\Github --dry-run
 ```
 
-MCP contract ปัจจุบันเป็น v4 มี public tools 44 ตัว พร้อม SHA-256 contract fingerprint ที่คำนวณจากชื่อ, schema และ annotations โดยเพิ่ม `read_files`, `project_snapshot` และ remote route แบบ read-only คือ `machine_read`; tools local เดิมและ `machine_call` ที่มี authority สูงยังทำงานเหมือนเดิม
+MCP contract แบบ legacy ปัจจุบันเป็น v6 มี public tools 46 ตัว พร้อม SHA-256 contract fingerprint ที่คำนวณจากชื่อ, schema และ annotations โดย `runtime_exec` รองรับการรัน Python/IPython แบบ persistent เมื่อใช้ `--dangerously-open-machine` และ `process_wait` จะรอ process ที่เริ่มด้วย `start_process` จนจบภายใน `timeout_ms` (ค่าเริ่มต้น 30 วินาที) แล้วคืน exit code กับ stdout/stderr offsets ถ้าหมดเวลาจะคืน `timedOut: true` และปล่อย process ทำงานต่อ จึงไม่ต้อง poll `process_status` ซ้ำ ๆ
+
+### Hybrid tool surface (ทดลองใช้)
+
+ใช้ `--tool-surface hybrid` (หรือ `MCP_TOOL_SURFACE=hybrid`) เพื่อย่อ tool surface ที่ ChatGPT เห็นจาก low-level tools จำนวนมากให้เหลือ `toolpy` กับ `capability_registry` เท่านั้น Hybrid mode ต้องใช้ `--dangerously-open-machine` เพราะ `toolpy` คือ persistent IPython capability runtime เดิมที่นำมา expose ด้วยชื่อที่ชัดกว่า low-level coding tools ยังอยู่หลัง `toolpy` และ Python ที่โมเดลสร้างสามารถประกอบการทำงานผ่าน `await tools.<name>(...)` ได้ โดย policy, approval, audit, call budget, output bound และ `allow_tools` ยังทำงานเหมือนเดิม ส่วน `capability_registry` ใช้ดู capability ที่มีอยู่โดยจัดกลุ่มเป็น `coding`, `think`, `skills`, `memory` และไม่ expose handler ภายใน กลุ่มสามตัวหลังจะมีข้อมูลเมื่อเชื่อม provider ที่รองรับจริง ระบบจะไม่สร้าง provider ปลอมขึ้นมา
+
+```powershell
+# Hybrid ที่ใช้เฉพาะ capability ของเครื่อง local หลัง toolpy
+node dist/index.js --root D:\Projects\Github --dangerously-open-machine --tool-surface hybrid --check
+
+# ต่อ local capability providers ทั้งหมด โดย ChatGPT ยังเห็นเพียง
+# toolpy + capability_registry
+node dist/index.js --root D:\Projects\Github --dangerously-open-machine --tool-surface hybrid `
+  --skill-hub-dir D:\Projects\Github\chatgpt-skill-hub `
+  --thinkforge-dir D:\Projects\Github\ThinkForge-MCP `
+  --memory-dir D:\Projects\Github\ourbook --check
+```
+
+provider ทั้งหมดเชื่อมผ่าน persistent stdio MCP client และใช้ schema/authority annotations ที่ provider ประกาศจริง Skill Hub เพิ่ม `skills_skill_*`, ThinkForge เพิ่ม `think_*` ส่วน OurBook ตั้งใจ expose แบบแคบเพียง `memory_recall`, `memory_remember`, `memory_stats` ไม่ยก memory server ทั้งก้อนเข้ามา capability ที่ non-destructive และ closed-world เรียกได้โดย default จาก `toolpy`; mutation อย่าง `skills_skill_sync` และ `memory_remember` ต้องระบุใน `allow_tools` เอง ตัวอย่าง: `hits = await tools.skills_skill_search(query="diagnosing bugs", limit=5); thought = await tools.think_analyze_problem(problem="too many tools"); stats = await tools.memory_stats(); result({'hits': hits, 'thought': thought, 'stats': stats})` สามารถใช้ env `MCP_SKILL_HUB_DIR`, `MCP_THINKFORGE_DIR`, `MCP_MEMORY_DIR` แทน CLI paths ได้
+
+ระหว่าง migration ค่าเริ่มต้นยังเป็น `legacy` เพื่อไม่ให้ connector/script เดิมพังทันที
+
+### OSINT สาธารณะ (เปิดใช้แบบ opt-in)
+
+ใช้ `--enable-osint` (หรือ `MCP_ENABLE_OSINT=1`) เพื่อเปิด `osint_search` และ `osint_fetch` ซึ่งอ่านเฉพาะหน้า HTTPS สาธารณะแบบมีขอบเขต คืนผลค้นหา/ชื่อเรื่อง/ข้อความ/ลิงก์ที่สกัดได้ จำกัดขนาดผลลัพธ์ ปฏิเสธปลายทาง private และไฟล์ binary และไม่ส่ง cookie หรือ credential จากผู้เรียก `scope=onion` ใช้ได้กับ HTTPS `.onion` ที่ระบุชัดเจนเท่านั้น และต้องมี Tor SOCKS5 ในเครื่อง เช่น `--tor-proxy socks5h://127.0.0.1:9050` (หรือ `MCP_TOR_SOCKS_PROXY`) เครื่องมือนี้ไม่ login, ไม่ submit form, ไม่ดาวน์โหลด binary และไม่ crawl ใช้เฉพาะการวิจัยสาธารณะที่ชอบด้วยกฎหมายและเคารพข้อกำหนดของเว็บไซต์
 
 สำหรับงานเขียนโค้ด `read_files` อ่าน text files ได้สูงสุด 50 ไฟล์ใน call เดียวภายใต้ combined byte budget ส่วน `project_snapshot` รวม Git/tree/package/scripts/instructions แบบ bounded เพื่อเข้าใจ repo ได้เร็วขึ้น `machine_status` แยก `runtimeRoot`, `configuredRoot` และ `configApplied` ชัดเจน ทำให้ `restartRequired` อิง live supervisor state จริง นอกจากนี้ synchronous `shell_command` ฝั่ง PowerShell จะ fail-fast เมื่อเจอ PowerShell error และคืน `success`, `hadPowerShellError` กับขนาด output แทนการรายงาน false success
 

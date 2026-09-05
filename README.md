@@ -81,6 +81,11 @@ chatgpt-local status
 
 Lifecycle and diagnostics commands:
 
+Use `chatgpt-local start` (or `on` / `up`) to open the Tunnel and
+`chatgpt-local stop` (or `off` / `down`) to close it, including its watchdog.
+These aliases use the same existing tunnel configuration. Run `chatgpt-local status`
+to inspect readiness. To remove the global CLI, run `npm uninstall -g chatgpt-machine-mcp`.
+
 ```text
 chatgpt-local up
 chatgpt-local down
@@ -135,14 +140,38 @@ Useful local checks:
 
 ```powershell
 chatgpt-local doctor          # dependencies + workspace permissions
-chatgpt-local check           # effective config + v4 / 44-tool contract fingerprint
+chatgpt-local check           # effective config + v6 / 46-tool contract fingerprint
 npm run smoke                 # real MCP + supervisor recovery smoke tests
 npm run verify                # full tests + server contract check
 # Preview all mutations without executing them:
 node dist/index.js --root D:\Projects\Github --dry-run
 ```
 
-The current MCP contract is v4: 44 public tools with a SHA-256 fingerprint derived from tool names, schemas, and annotations. The coding-oriented additions are `read_files`, `project_snapshot`, and the read-only remote route `machine_read`; existing local tools and the high-authority `machine_call` route remain available.
+The current legacy MCP contract is v6: 46 public tools with a SHA-256 fingerprint derived from tool names, schemas, and annotations. `runtime_exec` provides persistent model-generated IPython execution under `--dangerously-open-machine`, and `process_wait` waits for a process started by `start_process` to exit, up to `timeout_ms` (30 seconds by default), then returns its exit code and the next stdout/stderr offsets. A timeout returns `timedOut: true` and leaves the process running, so callers do not need to repeatedly poll `process_status`.
+
+### Hybrid tool surface (experimental)
+
+`--tool-surface hybrid` (or `MCP_TOOL_SURFACE=hybrid`) switches the ChatGPT-facing MCP surface from dozens of low-level primitives to two tools: `toolpy` and `capability_registry`. Hybrid mode requires `--dangerously-open-machine` because `toolpy` is the existing persistent IPython capability runtime under a clearer public name. Low-level coding capabilities remain behind `toolpy`, where generated Python can compose them with `await tools.<name>(...)`; policy, approvals, audit logging, call budgets, output bounds, and explicit `allow_tools` checks still apply. `capability_registry` reports capability names grouped as `coding`, `think`, `skills`, and `memory` without exposing handlers. The latter three groups are populated as compatible providers are attached; this change does not fake unavailable providers.
+
+```powershell
+# Compact surface with only local machine capabilities behind toolpy
+node dist/index.js --root D:\Projects\Github --dangerously-open-machine --tool-surface hybrid --check
+
+# Attach all local capability providers. ChatGPT still sees only
+# toolpy + capability_registry.
+node dist/index.js --root D:\Projects\Github --dangerously-open-machine --tool-surface hybrid `
+  --skill-hub-dir D:\Projects\Github\chatgpt-skill-hub `
+  --thinkforge-dir D:\Projects\Github\ThinkForge-MCP `
+  --memory-dir D:\Projects\Github\ourbook --check
+```
+
+Providers are connected through persistent stdio MCP clients using their advertised schemas and authority annotations. Skill Hub contributes `skills_skill_*`; ThinkForge contributes `think_*`; the intentionally narrow OurBook adapter exposes only `memory_recall`, `memory_remember`, and `memory_stats` rather than the entire memory server surface. Safe non-destructive, closed-world capabilities are callable by default from `toolpy`; destructive capabilities such as `skills_skill_sync` and `memory_remember` must be named explicitly in `allow_tools`. For example: `hits = await tools.skills_skill_search(query="diagnosing bugs", limit=5); thought = await tools.think_analyze_problem(problem="too many tools"); stats = await tools.memory_stats(); result({'hits': hits, 'thought': thought, 'stats': stats})`. The equivalent environment variables are `MCP_SKILL_HUB_DIR`, `MCP_THINKFORGE_DIR`, and `MCP_MEMORY_DIR`.
+
+Legacy mode remains the default during migration so existing ChatGPT connectors and scripts do not break abruptly.
+
+### Public OSINT (opt-in)
+
+Start with `--enable-osint` (or `MCP_ENABLE_OSINT=1`) to advertise `osint_search` and `osint_fetch`. These are bounded, read-only tools for public HTTPS pages: they return structured search leads or extracted title/text/links, cap response size, reject private destinations and non-text responses, and send no cookies or caller-supplied credentials. `scope=onion` is limited to explicit HTTPS `.onion` URLs and requires a local Tor SOCKS5 listener, for example `--tor-proxy socks5h://127.0.0.1:9050` (or `MCP_TOR_SOCKS_PROXY`). The tools do not log in, submit forms, download binaries, or crawl. Use them only for lawful public-interest research and respect site terms and applicable law.
 
 For coding work, `read_files` batches up to 50 bounded text reads under one combined byte budget, while `project_snapshot` returns a bounded Git/tree/package/scripts/instructions view for fast repository orientation. `machine_status` now reports `runtimeRoot`, `configuredRoot`, and `configApplied` separately so `restartRequired` is derived from live supervisor state instead of ambiguous path labels. Synchronous PowerShell `shell_command` calls use fail-fast PowerShell error handling and report `success`, `hadPowerShellError`, and output byte counts rather than treating a non-terminating PowerShell error as success.
 

@@ -202,3 +202,19 @@ test('structured git write tools stage, commit, inspect, and switch branches', a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('catastrophic commands are blocked in safe workspace mode', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'machine-mcp-guardrail-'));
+  try {
+    await assert.rejects(
+      runShellCommand({ command: 'rmdir /s /q C:\\', root, unrestricted: false }),
+      (error: unknown) => (error as { code?: string }).code === 'POLICY_DENIED',
+    );
+    await assert.rejects(
+      runShellCommand({ command: 'rm -rf /*', root, unrestricted: false }),
+      (error: unknown) => (error as { code?: string }).code === 'POLICY_DENIED',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

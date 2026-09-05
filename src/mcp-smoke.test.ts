@@ -66,11 +66,13 @@ test('stdio MCP exposes and executes the machine tools', async () => {
       'machines_list',
       'network_info',
       'process_status',
+      'process_wait',
       'process_write',
       'project_snapshot',
       'read_file',
       'read_files',
       'read_process_output',
+      'runtime_exec',
       'save_image_from_url',
       'search_code',
       'shell_command',
@@ -151,7 +153,13 @@ test('stdio MCP exposes and executes the machine tools', async () => {
     const promotedPayload = JSON.parse((promoted.content as Array<{ text: string }>)[0].text);
     assert.equal(promotedPayload.ok, true);
     assert.equal(promotedPayload.promotedToBackground, true);
-    await client.callTool({ name: 'stop_process', arguments: { pid: promotedPayload.pid } });
+    const waited = await client.callTool({ name: 'process_wait', arguments: { pid: promotedPayload.pid, timeout_ms: 5_000 } });
+    const waitedPayload = JSON.parse((waited.content as Array<{ text: string }>)[0].text);
+    assert.equal(waitedPayload.ok, true);
+    assert.equal(waitedPayload.completed, true);
+    assert.equal(waitedPayload.timedOut, false);
+    assert.equal(waitedPayload.exitCode, 0);
+    assert.ok(waitedPayload.nextStdoutOffset > promotedPayload.nextStdoutOffset);
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

@@ -16,10 +16,15 @@ test('tunnel scripts target the supervised runtime', () => {
   }
 });
 
-test('Windows tunnel only adds unrestricted machine access for the unrestricted config value', () => {
+test('Windows tunnel selects Hybrid only for unrestricted mode and wires local providers', () => {
   const text = readFileSync(path.join(projectRoot, 'scripts/start-tunnel.ps1'), 'utf8');
   assert.match(text, /\$accessMode -eq 'unrestricted'/);
   assert.doesNotMatch(text, /\$accessMode -eq 'workspace'/);
+  assert.match(text, /--tool-surface hybrid/);
+  assert.match(text, /--skill-hub-dir/);
+  assert.match(text, /--thinkforge-dir/);
+  assert.match(text, /--memory-dir/);
+  assert.match(text, /Hybrid tool surface requires MCP_ACCESS_MODE=unrestricted/);
 });
 
 test('bash tunnel scripts pass syntax validation when bash is available', (t) => {

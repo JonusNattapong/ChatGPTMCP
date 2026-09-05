@@ -19,7 +19,7 @@
   <rect class="bg" x="0" y="0" width="920" height="820"/>
 
   <text class="t" x="24" y="40" font-size="20" font-weight="700">chatgpt-machine-mcp — architecture</text>
-  <text class="t s" x="24" y="62">44 MCP tools with coding snapshots, proven read-only multi-machine routing, a supervised tunnel runtime, and a versioned v4 contract.</text>
+  <text class="t s" x="24" y="62">Legacy 46-tool surface or compact Hybrid toolpy surface, with provider-backed capabilities, supervised runtime, policy, audit, and a versioned v6 contract.</text>
 
   <!-- clients -->
   <text class="t tag" x="24" y="88" fill="#475569">CLIENTS</text>
@@ -63,8 +63,8 @@
   <g>
     <rect class="box" x="24" y="286" width="872" height="74" rx="10"/>
     <text class="mono h" x="40" y="310">src/index.ts — MCP worker</text>
-    <text class="t s" x="40" y="328">CLI options · stdio/HTTP transport wiring · bearer auth · health/readiness · policy validation · v4 contract fingerprint</text>
-    <text class="t s" x="40" y="345">wraps every handler result in the shared envelope, and sets MCP isError on failure</text>
+    <text class="t s" x="40" y="328">CLI options · stdio/HTTP wiring · provider startup/discovery · policy validation · v6 contract fingerprint</text>
+    <text class="t s" x="40" y="345">ToolGateway exposes legacy tools or toolpy + capability_registry; provider results keep the shared envelope</text>
     <rect x="620" y="298" width="262" height="48" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
     <text class="mono" x="632" y="316" font-size="10" fill="#0f172a">{ "ok": true, ... }</text>
     <text class="mono" x="632" y="333" font-size="10" fill="#b91c1c">{ "ok": false, "error": { "code" ... } }</text>
@@ -75,12 +75,12 @@
   <!-- registry -->
   <g>
     <rect class="box" x="24" y="394" width="872" height="76" rx="10" stroke="#2563eb" stroke-width="2"/>
-    <text class="mono h" x="40" y="418" fill="#1d4ed8">src/tools.ts — tool registry</text>
-    <text class="t s" x="40" y="436">one spec per tool: name · JSON Schema · MCP annotations · argument validation · handler</text>
-    <text class="t s" x="40" y="453">argument coercion rejects a missing or mistyped value instead of silently defaulting it</text>
+    <text class="mono h" x="40" y="418" fill="#1d4ed8">gateway + capability runtime</text>
+    <text class="t s" x="40" y="436">machine primitives + namespaced external providers are merged behind runtime_exec/toolpy</text>
+    <text class="t s" x="40" y="453">Skills / Think / Memory use persistent stdio MCP; Hybrid advertises only toolpy + capability_registry</text>
     <rect x="596" y="406" width="286" height="50" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
-    <text class="t" x="608" y="424" font-size="10" fill="#1e40af">machine_status and --check derive the tool list</text>
-    <text class="t" x="608" y="440" font-size="10" fill="#1e40af">and v4 SHA-256 contract fingerprint from this array</text>
+    <text class="t" x="608" y="424" font-size="10" fill="#1e40af">gateway.ts · hybrid-provider.ts</text>
+    <text class="t" x="608" y="440" font-size="10" fill="#1e40af">remote-provider.ts · stdio-mcp-adapter.ts</text>
   </g>
 
   <line class="line" x1="127" y1="470" x2="127" y2="502"/>
@@ -109,7 +109,7 @@
     <text class="mono" x="482" y="524" font-size="11.5" font-weight="600">process-tools.ts</text>
     <text class="t s" x="482" y="542">start · status · stop</text>
     <text class="t s" x="482" y="558">incremental output offsets</text>
-    <text class="t s" x="482" y="574">wait_ms instead of polling</text>
+    <text class="t s" x="482" y="574">process_wait until exit or timeout</text>
     <text class="t s" x="482" y="590">persisted PID/log registry + recovery</text>
 
     <rect class="box" x="690" y="504" width="206" height="96" rx="10"/>
@@ -157,4 +157,5 @@
     <text class="mono" x="40" y="795" font-size="11" font-weight="600" fill="#b91c1c">src/errors.ts</text>
     <text class="t" x="126" y="795" font-size="10.5" fill="#7f1d1d">ToolError(code, message, hint, details) — thrown by every module above, rendered by index.ts into the failure envelope. Codes are a public contract.</text>
   </g>
+  <!-- opt-in OSINT boundary: src/osint.ts, text-only HTTPS with clearnet SSRF checks or local Tor SOCKS for explicit .onion URLs -->
 </svg>

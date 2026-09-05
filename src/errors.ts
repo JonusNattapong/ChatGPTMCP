@@ -15,6 +15,9 @@ export type ToolErrorCode =
   | 'PATH_DENIED'
   | 'PRECONDITION_FAILED'
   | 'IDEMPOTENCY_CONFLICT'
+  | 'IDEMPOTENCY_UNKNOWN'
+  | 'PROCESS_IDENTITY_UNVERIFIED'
+  | 'PATCH_PARTIAL_FAILURE'
   | 'AMBIGUOUS_MATCH'
   | 'NO_MATCH'
   | 'TOO_LARGE'
@@ -72,3 +75,4 @@ export function describeError(error: unknown): {
   }
   return { code: 'INTERNAL', message: error instanceof Error ? error.message : String(error) };
 }
+

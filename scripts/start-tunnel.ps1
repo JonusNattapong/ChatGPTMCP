@@ -15,13 +15,29 @@ $policy = if ([string]::IsNullOrWhiteSpace($env:MCP_POLICY)) { 'admin' } else { 
 $approvalMode = if ([string]::IsNullOrWhiteSpace($env:MCP_APPROVAL_MODE)) { 'mrtr' } else { $env:MCP_APPROVAL_MODE }
 $machinesFile = if ([string]::IsNullOrWhiteSpace($env:MCP_MACHINES_FILE)) { Join-Path $projectRoot '.chatgpt-machine\machines.json' } else { $env:MCP_MACHINES_FILE }
 $supervisorTimeout = if ([string]::IsNullOrWhiteSpace($env:MCP_SUPERVISOR_TIMEOUT_MS)) { '120000' } else { $env:MCP_SUPERVISOR_TIMEOUT_MS }
+$toolSurface = if ([string]::IsNullOrWhiteSpace($env:MCP_TOOL_SURFACE)) { if ($accessMode -eq 'unrestricted') { 'hybrid' } else { 'legacy' } } else { $env:MCP_TOOL_SURFACE }
+$projectsRoot = Split-Path -Parent $projectRoot
+$skillHubDir = if ([string]::IsNullOrWhiteSpace($env:MCP_SKILL_HUB_DIR)) { Join-Path $projectsRoot 'chatgpt-skill-hub' } else { $env:MCP_SKILL_HUB_DIR }
+$thinkForgeDir = if ([string]::IsNullOrWhiteSpace($env:MCP_THINKFORGE_DIR)) { Join-Path $projectsRoot 'ThinkForge-MCP' } else { $env:MCP_THINKFORGE_DIR }
+$memoryDir = if ([string]::IsNullOrWhiteSpace($env:MCP_MEMORY_DIR)) { Join-Path $projectsRoot 'ourbook' } else { $env:MCP_MEMORY_DIR }
 $supervisorPath = (Join-Path $projectRoot 'dist\supervisor.js').Replace('\', '/')
 $watchdogScript = Join-Path $PSScriptRoot 'watch-tunnel.ps1'
 $watchdogPidPath = Join-Path $projectRoot '.tunnel\watch-tunnel.pid'
 $workspaceArg = $workspaceRoot.Replace('\', '/')
 $machinesArg = $machinesFile.Replace('\', '/')
 $openArg = if ($accessMode -eq 'unrestricted') { ' --dangerously-open-machine' } else { '' }
-$mcpCommand = "node $supervisorPath --supervisor-timeout $supervisorTimeout --root `"$workspaceArg`" --policy $policy --approval-mode $approvalMode --machines-file `"$machinesArg`"$openArg"
+$providerArgs = ''
+if ($toolSurface -eq 'hybrid') {
+    if ($accessMode -ne 'unrestricted') { throw 'Hybrid tool surface requires MCP_ACCESS_MODE=unrestricted.' }
+    foreach ($providerDir in @($skillHubDir, $thinkForgeDir, $memoryDir)) {
+        if (-not (Test-Path -LiteralPath $providerDir -PathType Container)) { throw "Hybrid provider directory not found: $providerDir" }
+    }
+    $skillHubArg = $skillHubDir.Replace('\', '/')
+    $thinkForgeArg = $thinkForgeDir.Replace('\', '/')
+    $memoryArg = $memoryDir.Replace('\', '/')
+    $providerArgs = " --tool-surface hybrid --skill-hub-dir `"$skillHubArg`" --thinkforge-dir `"$thinkForgeArg`" --memory-dir `"$memoryArg`""
+}
+$mcpCommand = "node $supervisorPath --supervisor-timeout $supervisorTimeout --root `"$workspaceArg`" --policy $policy --approval-mode $approvalMode --machines-file `"$machinesArg`"$openArg$providerArgs"
 
 if (-not (Test-Path -LiteralPath $clientPath)) {
     throw "Tunnel client not found: $clientPath"

@@ -231,13 +231,14 @@ test('read_process_output returns only output newer than the supplied offsets', 
     const access = { root, unrestricted: false };
     const started = await startProcess({
       ...access,
-      command: "node -e \"console.log('first'); setTimeout(() => console.log('second'), 300); setTimeout(() => {}, 5000)\"",
+      command: "node -e \"console.log('first'); process.stdin.once('data', () => console.log('second')); setTimeout(() => {}, 5000)\"",
     });
     try {
       const first = await readProcessOutput({ ...access, pid: started.pid, waitMs: 5_000 });
       assert.match(first.stdout, /first/);
       assert.ok(first.nextStdoutOffset > 0);
 
+      await writeProcessInput({ ...access, pid: started.pid, input: 'next\n' });
       const second = await readProcessOutput({
         ...access,
         pid: started.pid,
@@ -256,7 +257,7 @@ test('the tool registry validates arguments and reports its own surface', async 
   await withRoot('machine-mcp-registry-', async (root) => {
     const specs = createToolSpecs({ root, unrestricted: false, maxTimeoutMs: 60_000 });
     const byName = new Map(specs.map((spec) => [spec.name, spec]));
-    assert.equal(specs.length, 44);
+    assert.equal(specs.length, 46);
 
     await assert.rejects(
       byName.get('read_file')!.handler({}),

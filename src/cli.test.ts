@@ -20,6 +20,10 @@ test('CLI normalizes conventional help and version aliases', () => {
   assert.equal(normalizeCommand('--version'), 'version');
   assert.equal(normalizeCommand('-v'), 'version');
   assert.equal(normalizeCommand('status'), 'status');
+  for (const alias of ['start', 'on', 'up']) assert.equal(normalizeCommand(alias), 'up');
+  for (const alias of ['stop', 'off', 'down']) assert.equal(normalizeCommand(alias), 'down');
+  assert.match(usage(), /chatgpt-local start/);
+  assert.match(usage(), /chatgpt-local stop/);
 });
 
 test('workspace restart hint distinguishes persisted config from the live runtime root', () => {

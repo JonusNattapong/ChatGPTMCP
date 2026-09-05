@@ -29,7 +29,12 @@ import { CONTRACT_VERSION, createContractManifest } from './contract.js';
 import { describeError, ToolError } from './errors.js';
 import { evaluatePolicy, loadPolicy, policyFingerprint, validatePolicyConfig, type PolicyConfig } from './policy.js';
 import { withToolSpan } from './telemetry.js';
-import { createToolSpecs, type ToolSpec } from './tools.js';
+import type { ToolSpec } from './tools.js';
+import { ToolGateway, type ToolProvider } from './gateway.js';
+import { createMachineProvider } from './machine-provider.js';
+import { createHybridProvider } from './hybrid-provider.js';
+import { createRemoteMcpProvider } from './remote-provider.js';
+import { StdioMcpAdapter } from './stdio-mcp-adapter.js';
 import { IdempotencyStore } from './idempotency.js';
 import { APP_VERSION } from './version.js';
 
@@ -48,6 +53,12 @@ interface Options {
   check: boolean;
   doctor: boolean;
   dryRun: boolean;
+  osintEnabled: boolean;
+  torProxy?: string;
+  toolSurface: 'legacy' | 'hybrid';
+  skillHubDir?: string;
+  thinkForgeDir?: string;
+  memoryDir?: string;
 }
 
 interface Runtime {
@@ -56,6 +67,10 @@ interface Runtime {
   audit: AuditLogger;
   approvalState: RequestStateCodec<ApprovalRequestState>;
   idempotency: IdempotencyStore;
+  gateway: ToolGateway;
+  capabilities: readonly ToolSpec[];
+  providerIds: string[];
+  closeProviders: Array<() => Promise<void>>;
 }
 
 function valueAfter(args: string[], index: number, flag: string): string {
@@ -80,6 +95,12 @@ export function parseOptions(args: string[]): Options {
     check: false,
     doctor: false,
     dryRun: false,
+    osintEnabled: process.env.MCP_ENABLE_OSINT === '1',
+    torProxy: process.env.MCP_TOR_SOCKS_PROXY,
+    toolSurface: process.env.MCP_TOOL_SURFACE === 'hybrid' ? 'hybrid' : 'legacy',
+    skillHubDir: process.env.MCP_SKILL_HUB_DIR,
+    thinkForgeDir: process.env.MCP_THINKFORGE_DIR,
+    memoryDir: process.env.MCP_MEMORY_DIR,
   };
 
   for (let index = 0; index < args.length; index++) {
@@ -98,6 +119,12 @@ export function parseOptions(args: string[]): Options {
     else if (arg === '--check') options.check = true;
     else if (arg === '--doctor') options.doctor = true;
     else if (arg === '--dry-run') options.dryRun = true;
+    else if (arg === '--enable-osint') options.osintEnabled = true;
+    else if (arg === '--tor-proxy') options.torProxy = valueAfter(args, index++, arg);
+    else if (arg === '--tool-surface') options.toolSurface = valueAfter(args, index++, arg) as Options['toolSurface'];
+    else if (arg === '--skill-hub-dir') options.skillHubDir = valueAfter(args, index++, arg);
+    else if (arg === '--thinkforge-dir') options.thinkForgeDir = valueAfter(args, index++, arg);
+    else if (arg === '--memory-dir') options.memoryDir = valueAfter(args, index++, arg);
     else if (arg === '--help' || arg === '-h') {
       process.stdout.write(`chatgpt-machine-mcp\n\n` +
         `  --root <path>                 Default workspace and safe-mode boundary\n` +
@@ -112,7 +139,13 @@ export function parseOptions(args: string[]): Options {
         `  --approval-mode <mode>        mrtr (default) or deny when a policy requires approval\n` +
         `  --audit-file <path>           NDJSON audit log (default: <root>/.chatgpt-machine/audit.ndjson)\n` +
         `  --check                       Print configuration and the tool list, then exit\n` +
-        `  --dry-run                     Refuse mutations and report their simulated status\n`);
+        `  --dry-run                     Refuse mutations and report their simulated status\n` +
+        `  --enable-osint                Enable bounded public-web/.onion OSINT tools\n` +
+        `  --tor-proxy <socks5h://...>   Local Tor SOCKS5 proxy for .onion fetches\n` +
+        `  --tool-surface <mode>         legacy (default) or hybrid (toolpy + capability registry)\n` +
+        `  --skill-hub-dir <path>        Attach a local Skill Hub MCP provider behind toolpy\n` +
+        `  --thinkforge-dir <path>       Attach a local ThinkForge MCP provider behind toolpy\n` +
+        `  --memory-dir <path>           Attach a local OurBook memory MCP provider behind toolpy\n`);
       process.exit(0);
     } else {
       throw new Error(`Unknown option: ${arg}`);
@@ -122,6 +155,9 @@ export function parseOptions(args: string[]): Options {
   options.root = path.resolve(options.root);
   if (options.auditFile) options.auditFile = path.resolve(options.root, options.auditFile);
   if (options.machinesFile) options.machinesFile = path.resolve(options.machinesFile);
+  if (options.skillHubDir) options.skillHubDir = path.resolve(options.skillHubDir);
+  if (options.thinkForgeDir) options.thinkForgeDir = path.resolve(options.thinkForgeDir);
+  if (options.memoryDir) options.memoryDir = path.resolve(options.memoryDir);
   if (!Number.isInteger(options.maxTimeoutMs) || options.maxTimeoutMs < 1_000) {
     throw new Error('--max-timeout must be an integer of at least 1000 milliseconds.');
   }
@@ -129,6 +165,8 @@ export function parseOptions(args: string[]): Options {
     throw new Error('--http-port must be an integer between 1 and 65535.');
   }
   if (!['mrtr', 'deny'].includes(options.approvalMode)) throw new Error('--approval-mode must be one of: mrtr, deny.');
+  if (!['legacy', 'hybrid'].includes(options.toolSurface)) throw new Error('--tool-surface must be one of: legacy, hybrid.');
+  if (options.toolSurface === 'hybrid' && !options.dangerouslyOpenMachine) throw new Error('--tool-surface hybrid requires --dangerously-open-machine because toolpy uses the persistent Python runtime.');
   if (options.http && !['127.0.0.1', 'localhost', '::1'].includes(options.httpHost) && !options.httpToken) {
     throw new Error('HTTP binding outside loopback requires --http-token or MCP_HTTP_TOKEN.');
   }
@@ -153,9 +191,14 @@ function errorResult(toolName: string, error: unknown) {
   return textResult({ ok: false, tool: toolName, error: describeError(error) }, true);
 }
 
-function createMcpServer(runtime: Runtime): Server {
-  const { options, policy, audit, approvalState, idempotency } = runtime;
-  const specs = createToolSpecs({
+async function buildRuntime(
+  options: Options,
+  policy: PolicyConfig,
+  audit: AuditLogger,
+  approvalState: RequestStateCodec<ApprovalRequestState>,
+): Promise<Runtime> {
+  let externalCapabilities: ToolSpec[] = [];
+  const machineProvider = createMachineProvider({
     root: options.root,
     unrestricted: options.dangerouslyOpenMachine,
     maxTimeoutMs: options.maxTimeoutMs,
@@ -163,8 +206,155 @@ function createMcpServer(runtime: Runtime): Server {
     approvalMode: options.approvalMode,
     audit,
     machinesFile: options.machinesFile,
+    osintEnabled: options.osintEnabled,
+    torProxy: options.torProxy,
+    runtimeCapabilities: () => externalCapabilities,
+    runtimePolicyCheck: (spec, args) => evaluatePolicy(policy, spec, args, options.root),
   });
-  const byName = new Map<string, ToolSpec>(specs.map((spec) => [spec.name, spec]));
+
+  const capabilityProviders: ToolProvider[] = [machineProvider];
+  const closeProviders: Array<() => Promise<void>> = [];
+
+  try {
+  if (options.skillHubDir) {
+    const entry = path.join(options.skillHubDir, 'dist', 'src', 'index.js');
+    const readable = await access(entry, fsConstants.R_OK).then(() => true, () => false);
+    if (!readable) {
+      throw new ToolError(
+        'DEPENDENCY_MISSING',
+        `Skill Hub build output was not found: ${entry}`,
+        'Run npm run build in the Skill Hub repository, or remove --skill-hub-dir.',
+      );
+    }
+
+    const adapter = new StdioMcpAdapter({
+      command: process.execPath,
+      args: [entry, '--stdio'],
+      cwd: options.skillHubDir,
+      timeoutMs: Math.min(options.maxTimeoutMs, 30_000),
+      clientName: 'chatgpt-machine-mcp-skill-provider',
+      clientVersion: APP_VERSION,
+    });
+    try {
+      const provider = await createRemoteMcpProvider({ id: 'skills', adapter });
+      capabilityProviders.push(provider);
+      closeProviders.push(() => adapter.close());
+    } catch (error) {
+      await adapter.close();
+      throw error;
+    }
+  }
+
+  if (options.thinkForgeDir) {
+    const entry = path.join(options.thinkForgeDir, 'dist', 'index.js');
+    const readable = await access(entry, fsConstants.R_OK).then(() => true, () => false);
+    if (!readable) {
+      throw new ToolError(
+        'DEPENDENCY_MISSING',
+        `ThinkForge build output was not found: ${entry}`,
+        'Run npm run build in the ThinkForge repository, or remove --thinkforge-dir.',
+      );
+    }
+
+    const adapter = new StdioMcpAdapter({
+      command: process.execPath,
+      args: [entry],
+      cwd: options.thinkForgeDir,
+      timeoutMs: Math.min(options.maxTimeoutMs, 30_000),
+      clientName: 'chatgpt-machine-mcp-think-provider',
+      clientVersion: APP_VERSION,
+    });
+    try {
+      const provider = await createRemoteMcpProvider({ id: 'think', adapter });
+      capabilityProviders.push(provider);
+      closeProviders.push(() => adapter.close());
+    } catch (error) {
+      await adapter.close();
+      throw error;
+    }
+  }
+
+  if (options.memoryDir) {
+    const entry = path.join(options.memoryDir, 'dist', 'index.js');
+    const readable = await access(entry, fsConstants.R_OK).then(() => true, () => false);
+    if (!readable) {
+      throw new ToolError(
+        'DEPENDENCY_MISSING',
+        `OurBook build output was not found: ${entry}`,
+        'Run bun run build in the OurBook repository, or remove --memory-dir.',
+      );
+    }
+
+    const childEnv = Object.fromEntries(
+      Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    );
+    const adapter = new StdioMcpAdapter({
+      command: process.execPath,
+      args: [entry, 'mcp'],
+      cwd: options.memoryDir,
+      env: {
+        ...childEnv,
+        OURBOOK_NIGHTLY_CONSOLIDATION: '0',
+        OURBOOK_MEMORY_SELF_IMPROVE: '0',
+      },
+      timeoutMs: Math.min(options.maxTimeoutMs, 30_000),
+      clientName: 'chatgpt-machine-mcp-memory-provider',
+      clientVersion: APP_VERSION,
+    });
+    try {
+      const provider = await createRemoteMcpProvider({
+        id: 'memory',
+        adapter,
+        includeTools: ['ourbook_recall', 'ourbook_remember', 'ourbook_stats'],
+        publicName: (_providerId, remoteToolName) => remoteToolName.startsWith('ourbook_')
+          ? `memory_${remoteToolName.slice('ourbook_'.length)}`
+          : `memory_${remoteToolName}`,
+      });
+      capabilityProviders.push(provider);
+      closeProviders.push(() => adapter.close());
+    } catch (error) {
+      await adapter.close();
+      throw error;
+    }
+  }
+  } catch (error) {
+    await Promise.allSettled(closeProviders.map((close) => close()));
+    throw error;
+  }
+
+  externalCapabilities = capabilityProviders.slice(1).flatMap((provider) => [...provider.tools()]);
+  const capabilities = capabilityProviders.flatMap((provider) => [...provider.tools()]);
+  const publicProvider = options.toolSurface === 'hybrid'
+    ? createHybridProvider({ capabilities })
+    : machineProvider;
+  const gateway = new ToolGateway([publicProvider]);
+
+  validatePolicyConfig(
+    policy,
+    new Set([...capabilities, ...gateway.listTools()].map((spec) => spec.name)),
+  );
+
+  return {
+    options,
+    policy,
+    audit,
+    approvalState,
+    idempotency: new IdempotencyStore(path.join(
+      options.root,
+      '.chatgpt-machine',
+      'receipts',
+      policyFingerprint(policy) + (options.dangerouslyOpenMachine ? '-open' : '-workspace'),
+    )),
+    gateway,
+    capabilities,
+    providerIds: capabilityProviders.map((provider) => provider.id),
+    closeProviders,
+  };
+}
+
+function createMcpServer(runtime: Runtime): Server {
+  const { options, policy, audit, approvalState, idempotency, gateway } = runtime;
+  const specs = gateway.listTools();
   const server = new Server(
     { name: 'chatgpt-machine-mcp', version: APP_VERSION },
     {
@@ -213,7 +403,8 @@ function createMcpServer(runtime: Runtime): Server {
 
   server.setRequestHandler('tools/call', async (request, ctx) => {
     const name = request.params.name;
-    const spec = byName.get(name);
+    const resolved = gateway.resolve(name);
+    const spec = resolved?.spec;
     if (!spec) {
       return textResult({
         ok: false,
@@ -231,17 +422,6 @@ function createMcpServer(runtime: Runtime): Server {
     const args = Object.fromEntries(Object.entries(suppliedArgs).filter(([arg]) => arg !== 'idempotency_key'));
     const progressToken = request.params._meta?.progressToken;
     if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 0, total: 1, message: `Starting ${name}` } });
-    if (typeof key === 'string') {
-      try {
-        const cached = idempotency.lookup(key, name, args);
-        if (cached !== undefined) {
-          if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 1, total: 1, message: `Replayed ${name}` } });
-          return cached as ReturnType<typeof textResult>;
-        }
-      } catch (error: unknown) {
-        return errorResult(name, error);
-      }
-    }
     return withToolSpan(name, {
       'mcp.tool.name': name,
       'mcp.tool.read_only': spec.annotations.readOnlyHint,
@@ -252,7 +432,6 @@ function createMcpServer(runtime: Runtime): Server {
       if (options.dryRun && !spec.annotations.readOnlyHint) {
         const response = successResult({ dryRun: true, tool: name, wouldExecute: true, message: 'Server dry-run mode prevented this mutation.' });
         await audit.write({ traceId, tool: name, policy: policy.name, decision: 'allowed', status: 'success', durationMs: Date.now() - startedAt, args });
-        if (typeof key === 'string') idempotency.store(key, name, args, response);
         if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 1, total: 1, message: `Completed ${name}` } });
         return response;
       }
@@ -306,6 +485,7 @@ function createMcpServer(runtime: Runtime): Server {
         }
       }
 
+      const execute = async () => {
       try {
         const result = await spec.handler(args);
         const failed = name === 'shell_command'
@@ -325,7 +505,6 @@ function createMcpServer(runtime: Runtime): Server {
           errorCode: failed ? 'COMMAND_FAILED' : undefined,
         });
         const response = failed ? textResult({ ok: false, ...(result as Record<string, unknown>) }, true) : successResult(result);
-        if (typeof key === 'string') idempotency.store(key, name, args, response);
         if (!failed && !spec.annotations.readOnlyHint) await ctx.mcpReq.notify({ method: 'notifications/resources/updated', params: { uri: 'workspace://status' } });
         if (progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken, progress: 1, total: 1, message: `${failed ? 'Failed' : 'Completed'} ${name}` } });
         return response;
@@ -333,9 +512,12 @@ function createMcpServer(runtime: Runtime): Server {
         const described = describeError(error);
         await audit.write({ traceId, tool: name, policy: policy.name, decision: decision.requiresApproval ? 'approval_required' : 'allowed', status: 'error', durationMs: Date.now() - startedAt, args, errorCode: described.code });
         const response = errorResult(name, error);
-        if (typeof key === 'string') idempotency.store(key, name, args, response);
         return response;
       }
+      };
+      try {
+        return typeof key === 'string' ? await idempotency.run(key, name, args, execute) : await execute();
+      } catch (error) { return errorResult(name, error); }
     });
   });
 
@@ -378,12 +560,10 @@ async function main(): Promise<void> {
     key: randomBytes(32),
     ttlSeconds: 5 * 60,
   });
-  const validationSpecs = createToolSpecs({ root: options.root, unrestricted: options.dangerouslyOpenMachine, maxTimeoutMs: options.maxTimeoutMs, policyName: policy.name, approvalMode: options.approvalMode, audit, machinesFile: options.machinesFile });
-  validatePolicyConfig(policy, validationSpecs.map((spec) => spec.name));
-  const runtime: Runtime = { options, policy, audit, approvalState, idempotency: new IdempotencyStore() };
+  const runtime = await buildRuntime(options, policy, audit, approvalState);
   if (options.doctor) {
-    const specs = validationSpecs;
-    const contract = createContractManifest(specs);
+    const specs = runtime.gateway.listTools();
+    const contract = createContractManifest([...specs]);
     const commands = process.platform === 'win32'
       ? [{ command: 'git', args: ['--version'] }, { command: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'] }]
       : [{ command: 'git', args: ['--version'] }, { command: 'bash', args: ['--version'] }];
@@ -408,25 +588,21 @@ async function main(): Promise<void> {
       supervised: process.env.MCP_SUPERVISED === '1',
       checks,
       tools: specs.length,
+      toolSurface: options.toolSurface,
+      providers: runtime.providerIds,
+      capabilityCount: runtime.capabilities.length,
       contractVersion: CONTRACT_VERSION,
       contractFingerprint: contract.fingerprint,
       policy: policy.name,
       policyFingerprint: policyFingerprint(policy),
       hint: 'Install missing dependencies or fix workspace permissions, then rerun --doctor.',
     }, null, 2) + '\n');
+    await Promise.all(runtime.closeProviders.map((close) => close()));
     return;
   }
   if (options.check) {
-    const specs = createToolSpecs({
-      root: options.root,
-      unrestricted: options.dangerouslyOpenMachine,
-      maxTimeoutMs: options.maxTimeoutMs,
-      policyName: policy.name,
-      approvalMode: options.approvalMode,
-      audit,
-      machinesFile: options.machinesFile,
-    });
-    const contract = createContractManifest(specs);
+    const specs = runtime.gateway.listTools();
+    const contract = createContractManifest([...specs]);
     process.stdout.write(JSON.stringify({
       ok: true,
       version: APP_VERSION,
@@ -440,8 +616,12 @@ async function main(): Promise<void> {
       approvalMode: options.approvalMode,
       auditFile: audit.filePath,
       dryRun: options.dryRun,
+      toolSurface: options.toolSurface,
+      providers: runtime.providerIds,
+      capabilityCount: runtime.capabilities.length,
       tools: specs.map((spec) => spec.name),
     }, null, 2) + '\n');
+    await Promise.all(runtime.closeProviders.map((close) => close()));
     return;
   }
 
@@ -534,6 +714,7 @@ async function main(): Promise<void> {
     httpReady = false;
     await closeMcp?.();
     await closeHttpServer?.();
+    await Promise.all(runtime.closeProviders.map((close) => close()));
     process.exit(0);
   };
   process.on('SIGINT', cleanup);

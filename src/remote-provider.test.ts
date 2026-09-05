@@ -60,6 +60,22 @@ test('remote provider treats missing authority annotations conservatively', asyn
   });
 });
 
+test('remote provider allow-list exposes only selected tools and fails on contract drift', async () => {
+  const source = adapter({
+    discoverTools: async () => [
+      { name: 'recall', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
+      { name: 'remember', inputSchema: { type: 'object', properties: {} }, annotations: { destructiveHint: true } },
+    ],
+  });
+  const provider = await createRemoteMcpProvider({ id: 'memory', adapter: source, includeTools: ['recall'] });
+  assert.deepEqual(provider.tools().map((tool) => tool.name), ['memory_recall']);
+
+  await assert.rejects(
+    createRemoteMcpProvider({ id: 'memory', adapter: source, includeTools: ['missing'] }),
+    /missing required tool "missing"/,
+  );
+});
+
 test('remote provider rejects invalid provider ids before discovery', async () => {
   let discovered = false;
   await assert.rejects(

@@ -1,7 +1,9 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, type WriteStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
 import { StringDecoder } from 'node:string_decoder';
 import { redactCommandForStorage } from './audit.js';
 import { ToolError } from './errors.js';
@@ -22,12 +24,22 @@ export interface StartProcessOptions extends MachineAccess {
 
 export interface ProcessPidOptions extends MachineAccess {
   pid: number;
+  processId?: string;
 }
 
 export interface ReadProcessOutputOptions extends ProcessPidOptions {
   sinceStdout?: number;
   sinceStderr?: number;
   waitMs?: number;
+}
+
+export interface WaitProcessOptions extends ProcessPidOptions {
+  timeoutMs: number;
+  maxTimeoutMs?: number;
+  includeOutput?: boolean;
+  maxOutputBytes?: number;
+  sinceStdout?: number;
+  sinceStderr?: number;
 }
 
 export interface WriteProcessInputOptions extends ProcessPidOptions {
@@ -37,6 +49,8 @@ export interface WriteProcessInputOptions extends ProcessPidOptions {
 
 interface PersistedProcess {
   pid: number;
+  processId?: string;
+  osStartTime?: string;
   root: string;
   command: string;
   workdir: string;
@@ -53,6 +67,7 @@ interface PersistedProcess {
 
 interface ManagedProcess extends Omit<PersistedProcess, 'pid'> {
   child?: ChildProcess;
+  persistenceError?: string;
   stdout: string;
   stderr: string;
   stdoutDecoder: StringDecoder;
@@ -89,6 +104,8 @@ async function persistRoot(root: string): Promise<void> {
     .filter(([, info]) => info.root === root)
     .map(([pid, info]) => ({
       pid,
+      processId: info.processId,
+      osStartTime: info.osStartTime,
       root: info.root,
       command: redactCommandForStorage(info.command),
       workdir: info.workdir,
@@ -118,6 +135,7 @@ async function persistRoot(root: string): Promise<void> {
       await fs.rm(temporary, { force: true }).catch(() => undefined);
     }
   }).catch((error) => {
+    for (const info of managed.values()) if (info.root === root) info.persistenceError = 'Process registry write failed; restart recovery is not guaranteed.';
     console.error('[chatgpt-machine-mcp] process registry write failed:', error instanceof Error ? error.message : String(error));
   });
   return persistQueue;
@@ -143,6 +161,8 @@ async function ensureLoaded(access: MachineAccess): Promise<void> {
       if (!Number.isInteger(entry.pid) || entry.pid < 1 || managed.has(entry.pid)) continue;
       managed.set(entry.pid, {
         root,
+        processId: entry.processId,
+        osStartTime: entry.osStartTime,
         command: entry.command,
         workdir: entry.workdir,
         shell: entry.shell,
@@ -195,10 +215,53 @@ async function pidAlive(pid: number): Promise<boolean> {
   }
 }
 
+const execIdentity = promisify(execFile);
+
+/** OS identity is independent of PID reuse and of our wall-clock launch timestamp. */
+export async function processStartIdentity(pid: number): Promise<string | undefined> {
+  if (!Number.isInteger(pid) || pid < 1) return undefined;
+  try {
+    if (process.platform === 'linux') {
+      const stat = await fs.readFile(`/proc/${pid}/stat`, 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+      const boot = (await fs.readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();
+      return `${boot}:${fields[19]}`;
+    }
+    if (process.platform === 'win32') {
+      const result = await execIdentity('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+        `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString()`], { timeout: 3000, maxBuffer: 4096, windowsHide: true });
+      const value = result.stdout.trim();
+      return /^\d+$/.test(value) ? value : undefined;
+    }
+    // Coarse ps timestamps cannot safely authorize a recovered destructive operation.
+    return undefined;
+  } catch { return undefined; }
+}
+
+async function assertRecoveredIdentity(pid: number, info: ManagedProcess): Promise<void> {
+  if (info.child || info.finishedAt !== undefined) return;
+  const actual = await processStartIdentity(pid);
+  if (!info.osStartTime || actual !== info.osStartTime) {
+    throw new ToolError('PROCESS_IDENTITY_UNVERIFIED', 'Cannot prove that this PID still belongs to the recorded process.',
+      'Inspect the host process; no signal was sent.', { pid, processId: info.processId });
+  }
+}
+
 async function refreshRecovered(pid: number, info: ManagedProcess): Promise<boolean> {
   if (info.child) return info.exitCode === null && info.finishedAt === undefined;
   if (info.finishedAt !== undefined || info.exitCode !== null) return false;
   const alive = await pidAlive(pid);
+  if (alive) {
+    try {
+      await assertRecoveredIdentity(pid, info);
+    } catch {
+      // PID has been reused by another process since the last session.
+      // Treat as finished — do not signal or interact with the foreign process.
+      info.finishedAt = Date.now();
+      await persistRoot(info.root);
+      return false;
+    }
+  }
   if (!alive) {
     info.finishedAt = Date.now();
     await persistRoot(info.root);
@@ -218,6 +281,8 @@ async function getManaged(pid: number, access: ProcessPidOptions): Promise<Manag
       { managedPids: [...managed.keys()] },
     );
   }
+  if (info.root !== path.resolve(access.root)) throw new ToolError('PROCESS_NOT_MANAGED', 'Process belongs to a different workspace root.');
+  if (access.processId !== undefined && info.processId !== access.processId) throw new ToolError('PROCESS_IDENTITY_UNVERIFIED', 'process_id does not match this PID.');
   return info;
 }
 
@@ -235,6 +300,12 @@ export async function startProcess(options: StartProcessOptions) {
   await ensureLoaded(options);
   const workdir = await resolveMachinePath(options, options.workdir || '.', true);
   const shell = selectShell(options.shell ?? 'auto');
+  const processId = randomUUID();
+  const directory = runtimeDirectory(path.resolve(options.root));
+  await fs.mkdir(directory, { recursive: true });
+  const stdoutLogPath = path.join(directory, `${processId}.stdout.log`);
+  const stderrLogPath = path.join(directory, `${processId}.stderr.log`);
+  await Promise.all([fs.writeFile(stdoutLogPath, ''), fs.writeFile(stderrLogPath, '')]);
   const child = spawn(shell.executable, [...shell.args, options.command], {
     cwd: workdir,
     env: options.env ? { ...process.env, ...options.env } : process.env,
@@ -244,17 +315,13 @@ export async function startProcess(options: StartProcessOptions) {
   });
   if (!child.pid) throw new ToolError('INTERNAL', 'The process started without a PID.');
 
-  const directory = runtimeDirectory(path.resolve(options.root));
-  await fs.mkdir(directory, { recursive: true });
-  const stdoutLogPath = path.join(directory, `${child.pid}.stdout.log`);
-  const stderrLogPath = path.join(directory, `${child.pid}.stderr.log`);
-  await Promise.all([fs.writeFile(stdoutLogPath, ''), fs.writeFile(stderrLogPath, '')]);
 
   let settleProcess!: () => void;
   const settled = new Promise<void>((resolve) => { settleProcess = resolve; });
 
   const info: ManagedProcess = {
     child,
+    processId,
     root: path.resolve(options.root),
     command: options.command,
     workdir,
@@ -275,7 +342,6 @@ export async function startProcess(options: StartProcessOptions) {
     settled,
   };
   managed.set(child.pid, info);
-  await persistRoot(info.root);
 
   child.stdout?.on('data', (chunk: Buffer) => appendOutput(info, 'stdout', chunk));
   child.stderr?.on('data', (chunk: Buffer) => appendOutput(info, 'stderr', chunk));
@@ -297,21 +363,26 @@ export async function startProcess(options: StartProcessOptions) {
       }
     })();
   });
+  info.osStartTime = await processStartIdentity(child.pid);
+  await persistRoot(info.root);
   child.unref();
   return {
     pid: child.pid,
+    processId,
+    identityAvailable: info.osStartTime !== undefined,
+    recoveryWarning: info.persistenceError,
     command: info.command,
     workdir,
     shell: info.shell,
     startedAt: new Date(info.startedAt).toISOString(),
-    durable: true,
+    durable: !info.persistenceError,
     stdinAvailable: child.stdin?.writable === true,
   };
 }
 
 export async function listManagedProcesses(access?: MachineAccess) {
   if (access) await ensureLoaded(access);
-  return Promise.all([...managed.entries()].map(async ([pid, info]) => ({
+  return Promise.all([...managed.entries()].filter(([, info]) => !access || info.root === path.resolve(access.root)).map(async ([pid, info]) => ({
     pid,
     running: await refreshRecovered(pid, info),
     recovered: !info.child,
@@ -329,6 +400,9 @@ export async function processStatus(options: ProcessPidOptions) {
   const stderr = info.child ? info.stderr : await readLog(info.stderrLogPath);
   return {
     pid: options.pid,
+    processId: info.processId,
+    exitCodeKnown: info.exitCode !== null,
+    recoveryWarning: info.persistenceError,
     running,
     recovered: !info.child,
     exitCode: info.exitCode,
@@ -374,6 +448,9 @@ export async function readProcessOutput(options: ReadProcessOutputOptions) {
 
   return {
     pid: options.pid,
+    processId: info.processId,
+    exitCodeKnown: info.exitCode !== null,
+    recoveryWarning: info.persistenceError,
     running,
     recovered: !info.child,
     exitCode: info.exitCode,
@@ -382,6 +459,67 @@ export async function readProcessOutput(options: ReadProcessOutputOptions) {
     nextStdoutOffset: current.stdout.length,
     nextStderrOffset: current.stderr.length,
     outputTruncated: info.outputTruncated,
+  };
+}
+
+export async function waitProcess(options: WaitProcessOptions) {
+  const maxTimeoutMs = options.maxTimeoutMs ?? 10 * 60_000;
+  if (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > maxTimeoutMs) {
+    throw new ToolError('INVALID_ARGUMENT', `"timeout_ms" must be an integer between 100 and ${maxTimeoutMs}.`);
+  }
+  const maxOutputBytes = options.maxOutputBytes ?? 16_384;
+  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes < 4 || maxOutputBytes > MAX_CAPTURE_BYTES) throw new ToolError('INVALID_ARGUMENT', 'max_output_bytes must be between 4 and 4194304.');
+  for (const offset of [options.sinceStdout ?? 0, options.sinceStderr ?? 0]) if (!Number.isInteger(offset) || offset < 0) throw new ToolError('INVALID_ARGUMENT', 'Output offsets must be non-negative integers.');
+  const info = await getManaged(options.pid, options);
+
+  const startedWaitingAt = Date.now();
+  let running = await refreshRecovered(options.pid, info);
+  if (running && info.settled) {
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        info.settled,
+        new Promise<void>((resolve) => { timeout = setTimeout(resolve, options.timeoutMs); }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+    running = await refreshRecovered(options.pid, info);
+  } else {
+    const deadline = startedWaitingAt + options.timeoutMs;
+    while (running && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(OUTPUT_POLL_INTERVAL_MS, Math.max(1, deadline - Date.now()))));
+      running = await refreshRecovered(options.pid, info);
+    }
+  }
+
+  const stdout = info.child ? info.stdout : await readLog(info.stdoutLogPath);
+  const stderr = info.child ? info.stderr : await readLog(info.stderrLogPath);
+  const outStart = Math.min(options.sinceStdout ?? 0, stdout.length);
+  const errStart = Math.min(options.sinceStderr ?? 0, stderr.length);
+  const take = (text: string, budget: number) => {
+    let value = text.slice(0, budget);
+    while (Buffer.byteLength(value) > budget || /[\uD800-\uDBFF]$/.test(value)) value = value.slice(0, -1);
+    return value;
+  };
+  const out = options.includeOutput ? take(stdout.slice(outStart), maxOutputBytes) : '';
+  const err = options.includeOutput ? take(stderr.slice(errStart), maxOutputBytes - Buffer.byteLength(out)) : '';
+  return {
+    ...(options.includeOutput ? { stdout: out, stderr: err, outputHasMore: outStart + out.length < stdout.length || errStart + err.length < stderr.length } : {}),
+    pid: options.pid,
+    processId: info.processId,
+    exitCodeKnown: info.exitCode !== null,
+    recoveryWarning: info.persistenceError,
+    running,
+    completed: !running,
+    timedOut: running,
+    recovered: !info.child,
+    exitCode: info.exitCode,
+    signal: info.signal,
+    nextStdoutOffset: options.includeOutput ? outStart + out.length : stdout.length,
+    nextStderrOffset: options.includeOutput ? errStart + err.length : stderr.length,
+    outputTruncated: info.outputTruncated,
+    waitedMs: Date.now() - startedWaitingAt,
   };
 }
 
@@ -424,6 +562,7 @@ export async function stopProcess(options: ProcessPidOptions) {
   let escalated = false;
   while (await pidAlive(options.pid) && Date.now() - startedWaitingAt < STOP_TIMEOUT_MS) {
     if (!escalated && process.platform !== 'win32' && Date.now() - startedWaitingAt > STOP_GRACE_MS) {
+      await assertRecoveredIdentity(options.pid, info);
       escalated = true;
       try { process.kill(info.child ? -options.pid : options.pid, 'SIGKILL'); } catch { /* already gone */ }
     }
@@ -442,6 +581,7 @@ export async function stopProcess(options: ProcessPidOptions) {
     // period so the documented "stop, then delete workdir" sequence is reliable.
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
+  if (await pidAlive(options.pid)) throw new ToolError('TIMEOUT', 'Process did not exit within the stop deadline.', undefined, { pid: options.pid });
   if (!info.child && info.finishedAt === undefined) info.finishedAt = Date.now();
   await persistRoot(info.root);
   return {

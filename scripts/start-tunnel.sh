@@ -26,6 +26,28 @@ policy="${MCP_POLICY:-admin}"
 approval_mode="${MCP_APPROVAL_MODE:-mrtr}"
 machines_file="${MCP_MACHINES_FILE:-${project_root}/.chatgpt-machine/machines.json}"
 supervisor_timeout="${MCP_SUPERVISOR_TIMEOUT_MS:-120000}"
+tool_surface="${MCP_TOOL_SURFACE:-}"
+if [[ -z "${tool_surface}" ]]; then
+  if [[ "${access_mode}" == "unrestricted" ]]; then tool_surface="hybrid"; else tool_surface="legacy"; fi
+fi
+projects_root="$(dirname "${project_root}")"
+skill_hub_dir="${MCP_SKILL_HUB_DIR:-${projects_root}/chatgpt-skill-hub}"
+thinkforge_dir="${MCP_THINKFORGE_DIR:-${projects_root}/ThinkForge-MCP}"
+memory_dir="${MCP_MEMORY_DIR:-${projects_root}/ourbook}"
+provider_args=""
+if [[ "${tool_surface}" == "hybrid" ]]; then
+  if [[ "${access_mode}" != "unrestricted" ]]; then
+    echo "Hybrid tool surface requires MCP_ACCESS_MODE=unrestricted." >&2
+    exit 1
+  fi
+  for provider_dir in "${skill_hub_dir}" "${thinkforge_dir}" "${memory_dir}"; do
+    if [[ ! -d "${provider_dir}" ]]; then
+      echo "Hybrid provider directory not found: ${provider_dir}" >&2
+      exit 1
+    fi
+  done
+  provider_args=" --tool-surface hybrid --skill-hub-dir \"${skill_hub_dir}\" --thinkforge-dir \"${thinkforge_dir}\" --memory-dir \"${memory_dir}\""
+fi
 if [[ "${platform}" == "Darwin" ]]; then
   runtime_key="$(security find-generic-password -a "${USER}" -s chatgpt-machine-mcp-tunnel -w)"
 else
@@ -56,6 +78,9 @@ if [[ "${runtime_key}" != sk-* ]]; then
 fi
 
 mkdir -p "${profile_dir}"
+open_arg=""
+if [[ "${access_mode}" == "unrestricted" ]]; then open_arg=" --dangerously-open-machine"; fi
+mcp_command="node ${project_root}/dist/supervisor.js --supervisor-timeout ${supervisor_timeout} --root \"${workspace_root}\" --policy ${policy} --approval-mode ${approval_mode} --machines-file \"${machines_file}\"${open_arg}${provider_args}"
 CONTROL_PLANE_API_KEY="${runtime_key}" "${client_path}" runtimes connect \
   --alias chatgpt-machine \
   --admin-profile default \
@@ -64,7 +89,7 @@ CONTROL_PLANE_API_KEY="${runtime_key}" "${client_path}" runtimes connect \
   --tunnel-id "${tunnel_id}" \
   --organization-id "${organization_id}" \
   --runtime-api-key env:CONTROL_PLANE_API_KEY \
-  --mcp-command "node ${project_root}/dist/supervisor.js --supervisor-timeout ${supervisor_timeout} --root \"${workspace_root}\" --policy ${policy} --approval-mode ${approval_mode} --machines-file \"${machines_file}\" $([[ ${access_mode} == unrestricted ]] && printf %s --dangerously-open-machine)"
+  --mcp-command "${mcp_command}"
 
 "${project_root}/scripts/status-tunnel.sh"
 
