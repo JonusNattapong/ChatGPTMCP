@@ -31,9 +31,18 @@ if [[ -z "${tool_surface}" ]]; then
   if [[ "${access_mode}" == "unrestricted" ]]; then tool_surface="hybrid"; else tool_surface="legacy"; fi
 fi
 projects_root="$(dirname "${project_root}")"
-skill_hub_dir="${MCP_SKILL_HUB_DIR:-${projects_root}/chatgpt-skill-hub}"
-thinkforge_dir="${MCP_THINKFORGE_DIR:-${projects_root}/ThinkForge-MCP}"
-memory_dir="${MCP_MEMORY_DIR:-${projects_root}/ourbook}"
+default_skill_hub="${project_root}/packages/skill-hub"
+if [[ ! -d "${default_skill_hub}" ]]; then default_skill_hub="${projects_root}/chatgpt-skill-hub"; fi
+
+default_thinkforge="${project_root}/packages/thinkforge"
+if [[ ! -d "${default_thinkforge}" ]]; then default_thinkforge="${projects_root}/ThinkForge-MCP"; fi
+
+default_memory="${project_root}/packages/memory"
+if [[ ! -d "${default_memory}" ]]; then default_memory="${projects_root}/ourbook"; fi
+
+skill_hub_dir="${MCP_SKILL_HUB_DIR:-${default_skill_hub}}"
+thinkforge_dir="${MCP_THINKFORGE_DIR:-${default_thinkforge}}"
+memory_dir="${MCP_MEMORY_DIR:-${default_memory}}"
 provider_args=""
 if [[ "${tool_surface}" == "hybrid" ]]; then
   if [[ "${access_mode}" != "unrestricted" ]]; then
@@ -80,7 +89,11 @@ fi
 mkdir -p "${profile_dir}"
 open_arg=""
 if [[ "${access_mode}" == "unrestricted" ]]; then open_arg=" --dangerously-open-machine"; fi
-mcp_command="node ${project_root}/dist/supervisor.js --supervisor-timeout ${supervisor_timeout} --root \"${workspace_root}\" --policy ${policy} --approval-mode ${approval_mode} --machines-file \"${machines_file}\"${open_arg}${provider_args}"
+supervisor_path="${project_root}/dist/supervisor.js"
+if [[ -f "${project_root}/apps/server/dist/supervisor.js" ]]; then
+  supervisor_path="${project_root}/apps/server/dist/supervisor.js"
+fi
+mcp_command="node ${supervisor_path} --supervisor-timeout ${supervisor_timeout} --root \"${workspace_root}\" --policy ${policy} --approval-mode ${approval_mode} --machines-file \"${machines_file}\"${open_arg}${provider_args}"
 CONTROL_PLANE_API_KEY="${runtime_key}" "${client_path}" runtimes connect \
   --alias chatgpt-machine \
   --admin-profile default \

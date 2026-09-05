@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [switch]$NoWatchdog
 )
@@ -17,10 +17,18 @@ $machinesFile = if ([string]::IsNullOrWhiteSpace($env:MCP_MACHINES_FILE)) { Join
 $supervisorTimeout = if ([string]::IsNullOrWhiteSpace($env:MCP_SUPERVISOR_TIMEOUT_MS)) { '120000' } else { $env:MCP_SUPERVISOR_TIMEOUT_MS }
 $toolSurface = if ([string]::IsNullOrWhiteSpace($env:MCP_TOOL_SURFACE)) { if ($accessMode -eq 'unrestricted') { 'hybrid' } else { 'legacy' } } else { $env:MCP_TOOL_SURFACE }
 $projectsRoot = Split-Path -Parent $projectRoot
-$skillHubDir = if ([string]::IsNullOrWhiteSpace($env:MCP_SKILL_HUB_DIR)) { Join-Path $projectsRoot 'chatgpt-skill-hub' } else { $env:MCP_SKILL_HUB_DIR }
-$thinkForgeDir = if ([string]::IsNullOrWhiteSpace($env:MCP_THINKFORGE_DIR)) { Join-Path $projectsRoot 'ThinkForge-MCP' } else { $env:MCP_THINKFORGE_DIR }
-$memoryDir = if ([string]::IsNullOrWhiteSpace($env:MCP_MEMORY_DIR)) { Join-Path $projectsRoot 'ourbook' } else { $env:MCP_MEMORY_DIR }
-$supervisorPath = (Join-Path $projectRoot 'dist\supervisor.js').Replace('\', '/')
+$defaultSkillHub = if (Test-Path (Join-Path $projectRoot 'packages\skill-hub') -PathType Container) { Join-Path $projectRoot 'packages\skill-hub' } else { Join-Path $projectsRoot 'chatgpt-skill-hub' }
+$defaultThinkForge = if (Test-Path (Join-Path $projectRoot 'packages\thinkforge') -PathType Container) { Join-Path $projectRoot 'packages\thinkforge' } else { Join-Path $projectsRoot 'ThinkForge-MCP' }
+$defaultMemory = if (Test-Path (Join-Path $projectRoot 'packages\memory') -PathType Container) { Join-Path $projectRoot 'packages\memory' } else { Join-Path $projectsRoot 'ourbook' }
+$skillHubDir = if ([string]::IsNullOrWhiteSpace($env:MCP_SKILL_HUB_DIR)) { $defaultSkillHub } else { $env:MCP_SKILL_HUB_DIR }
+$thinkForgeDir = if ([string]::IsNullOrWhiteSpace($env:MCP_THINKFORGE_DIR)) { $defaultThinkForge } else { $env:MCP_THINKFORGE_DIR }
+$memoryDir = if ([string]::IsNullOrWhiteSpace($env:MCP_MEMORY_DIR)) { $defaultMemory } else { $env:MCP_MEMORY_DIR }
+$supervisorFile = if (Test-Path (Join-Path $projectRoot 'apps\server\dist\supervisor.js')) {
+    Join-Path $projectRoot 'apps\server\dist\supervisor.js'
+} else {
+    Join-Path $projectRoot 'dist\supervisor.js'
+}
+$supervisorPath = $supervisorFile.Replace('\', '/')
 $watchdogScript = Join-Path $PSScriptRoot 'watch-tunnel.ps1'
 $watchdogPidPath = Join-Path $projectRoot '.tunnel\watch-tunnel.pid'
 $workspaceArg = $workspaceRoot.Replace('\', '/')
