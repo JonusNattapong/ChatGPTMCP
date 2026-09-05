@@ -21,6 +21,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Bug Fixes
 
+- **server**: resolve stdio mcp test fixture path and add zod devDependency (`45665e6`)
+- **playground**: align package namespaces with @chatgpt-pilot and fix CI typecheck (`d490199`)
+- **ci**: synchronize pnpm-lock.yaml with pruned memory dependencies (`000cedb`)
+- avoid PowerShell security module reload (`43a66b1`)
+
+### 📚 Documentation
+
+- enrich AGENTS.md with authoritative security invariants and operating guidelines (`69a93c5`)
+- comprehensive documentation overhaul for chatgpt-pilot (`ae678aa`)
+- document tunnel watchdog recovery (`1102bf3`)
+- add Machine MCP logo (`abf480a`)
+
+### 🧪 Testing & Verification
+
+- **server**: test python project command detection hermetically (`335f6b5`)
+
+### ⚙️ CI/CD & Tooling
+
+- run workspace build before typecheck in CI workflow (`977dc5a`)
+- setup automated CI/CD pipeline and changelog generator (`fd89131`)
+
+### 🧹 Chores & Maintenance
+
+- **changelog**: auto-update CHANGELOG.md [skip ci] (`e84e208`)
+- **changelog**: auto-update CHANGELOG.md [skip ci] (`99bd4c0`)
+- **changelog**: auto-update CHANGELOG.md [skip ci] (`2588fed`)
+- **changelog**: auto-update CHANGELOG.md [skip ci] (`6e37a08`)
+- add tunnel scripts and tool checksums (`dc911d2`)
+
+### 🔨 Other Changes
+
+- Merge pull request #3 from JonusNattapong/release/v1.0.0-ci-memory (`5ca97fc`)
+
+## [1.0.0] - 2026-09-05
+
+### ✨ Features
+
+- **memory**: implement pure Markdown Living Memory Book engine (`927773c`)
+- **storage**: implement unified .pilot storage layout with legacy fallbacks (`13e73a1`)
+- consolidate ecosystem into ChatGPT Pilot monorepo (#2) (`bbac202`)
+- harden coding DX and remote reads (`596327b`)
+- add multi-machine MCP routing (`ff88eaa`)
+- reconnect unhealthy tunnel runtimes (`8c1f174`)
+- harden supervised runtime and verified workflows (`fb1c249`)
+
+### 🐛 Bug Fixes
+
 - **playground**: align package namespaces with @chatgpt-pilot and fix CI typecheck (`d490199`)
 - **ci**: synchronize pnpm-lock.yaml with pruned memory dependencies (`000cedb`)
 - avoid PowerShell security module reload (`43a66b1`)
