@@ -1,13 +1,23 @@
-# 🚀 ChatGPT Pilot (`chatgpt-pilot`)
+﻿# ChatGPT Pilot
 
-[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Monorepo](https://img.shields.io/badge/monorepo-pnpm-orange.svg)](pnpm-workspace.yaml)
+[![CI/CD](https://github.com/JonusNattapong/chatgpt-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/JonusNattapong/chatgpt-pilot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![pnpm](https://img.shields.io/badge/pnpm-workspace-orange.svg)](pnpm-workspace.yaml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
-[![MCP](https://img.shields.io/badge/protocol-Model_Context_Protocol-purple.svg)](https://modelcontextprotocol.io/)
+[![Model Context Protocol](https://img.shields.io/badge/MCP-2.0-purple.svg)](https://modelcontextprotocol.io/)
 
-**ChatGPT Pilot** is an all-in-one local MCP workstation, runtime gateway, and capability bridge for ChatGPT and Codex. It consolidates developer infrastructure into four integrated pillars behind a single unified MCP surface:
+ChatGPT Pilot is a local Model Context Protocol (MCP) server that provides system execution, memory, and cognitive capabilities to ChatGPT, Codex, and other MCP-compatible clients.
 
-```
+It unifies four capabilities behind a single MCP connection:
+
+- **System and Machine Primitives (`apps/server`)**: Bounded filesystem operations, background process execution, pre-commit Git verification gates, and a persistent Python execution runtime (`toolpy`).
+- **Cognitive Frameworks (`packages/thinkforge`)**: Analytical tools for structured divergence, convergence, assumption testing, and failure mode simulation.
+- **Skills Catalog (`packages/skill-hub`)**: Dynamic discovery and execution of curated procedures stored in `skills/`.
+- **Markdown Memory Engine (`packages/memory`)**: A file-based memory store that organizes documentation, project metadata, architectural decisions, and timelines into human-readable Markdown files without native database dependencies.
+
+## System Architecture
+
+```text
                   ┌─────────────────────────────────────────────────────────┐
                   │                 ChatGPT / Codex Client                  │
                   └────────────────────────────┬────────────────────────────┘
@@ -23,209 +33,226 @@
                   └───────┬──────────────┬──────────────┬─────────────┬─────┘
                           │              │              │             │
               ┌───────────┴───┐   ┌──────┴──────┐ ┌─────┴─────┐ ┌─────┴──────────┐
-              │ 💻 Coding/Sys │   │  🧠 Think   │ │ 📚 Skills │ │   💾 Memory    │
-              │  apps/server  │   │  ThinkForge │ │ Skill Hub │ │ Living Book    │
+              │ System/Machine│   │ ThinkForge  │ │ Skill Hub │ │ Memory Book    │
+              │  apps/server  │   │  Cognitive  │ │ Execution │ │ Pure Markdown  │
               └───────────────┘   └─────────────┘ └───────────┘ └────────────────┘
 ```
 
----
+## Prerequisites
 
-## 🌟 The Four Pillars
+Before running ChatGPT Pilot, ensure that your environment meets the following requirements:
 
-1. 💻 **Coding & System Execution** (`apps/server`)
-   - **Filesystem & Codebase**: High-performance reads, structured diff editing, atomic line replacement, and code search (`search_code`, `edit_file`, `find_files`).
-   - **Process & Shell Management**: Supervised background processes, monotonic offset stream reading, and safe command execution (`shell`, `start_process`, `read_process_output`, `process_write`).
-   - **Verified Git Tools**: Transactional Git staging and commit gates (`git_status`, `git_diff`, `git_commit_verified`) preventing dirty worktrees or broken tests from being committed.
-   - **Persistent Python Runtime (`toolpy`)**: IPython-backed stateful execution environment for programmatic tool composition with low latency and tight token budgets.
+- **Node.js**: `20.0.0` or later (`22.x` or `24.x` recommended)
+- **pnpm**: `9.x` or `10.x`
+- **Git**: `2.30.0` or later
+- **Python**: `3.10` or later with `ipykernel` (optional, required only for persistent `toolpy` execution)
 
-2. 🧠 **Cognitive Accelerators** (`packages/thinkforge`)
-   - **ThinkForge MCP**: Structured thinking tools enabling agents to diverge on ideas, challenge assumptions, reframe problems, analyze trade-offs, and stress-test architectures (`diverge`, `converge`, `challenge`, `frame`, `reframe`, `perspective_swap`, `stress_test`).
+## Quickstart
 
-3. 📚 **Dynamic Skills Engine** (`packages/skill-hub` + `skills/`)
-   - **Skill Hub Gateway**: Automated discovery and runtime runner for **111+ curated agentic skills** (engineering, design, product management, DevOps, and debugging).
-   - Dynamically loads procedures from `skills/` without polluting initial prompt token limits.
-
-4. 💾 **Living Memory Book** (`packages/memory`)
-   - **Pure Markdown Second Brain**: Zero-native-dependency, 100% human-readable, and Git-friendly memory engine. Replaces legacy binary SQLite databases with structured Markdown books.
-   - **Master Table of Contents (`TOC.md`)**: Automatically indexes chapters, subtopics, and chronological events.
-   - **Executive Summaries (`SUMMARY.md`)**: High-level overviews across developer identity, projects, and architecture.
-   - **Temporal Timesteps (`timesteps/`)**: Chronological recall by date or month (`latest`, `2026-09-05`, `2026-08`).
-   - **Self-Seeding**: Automatically seeds and syncs from backups or bundled snapshots.
-
----
-
-## 📁 Repository Structure
-
-```text
-chatgpt-pilot/
-├── .pilot/                      # Unified workspace storage (audit, runtime config, memory)
-├── apps/
-│   ├── server/                  # Core MCP Server, Tunnel Supervisor & Gateway
-│   └── playground/              # Interactive developer testing suite
-├── packages/
-│   ├── memory/                  # Pure Markdown Living Memory Book Engine
-│   │   ├── seed/                # Bundled recovery snapshots (identity, projects, architecture)
-│   │   └── src/
-│   │       ├── book.ts          # BrainBook manager (TOC, chapters, timesteps, search)
-│   │       └── index.ts         # MCP Server entrypoint & standalone CLI
-│   ├── thinkforge/              # Cognitive accelerators & problem reframing tools
-│   ├── skill-hub/               # Skills catalog discovery and execution gateway
-│   ├── mcp-server/              # Minimal standalone MCP server adapter
-│   └── core/                    # Shared contracts, types, and schemas
-├── skills/                      # 111+ curated agentic workflow procedures
-├── scripts/                     # Platform automation & tunnel scripts
-└── docs/                        # Architecture and integration guides
-```
-
----
-
-## 🚀 Quick Start
-
-### Requirements
-- **Node.js**: `v20+` or `v22+`
-- **Package Manager**: `pnpm` (v9 or v10)
-- **OS**: Windows, macOS, or Linux
-
-### 1. Installation & Build
+### 1. Clone the repository and install dependencies
 
 ```bash
-# Clone the repository
 git clone https://github.com/JonusNattapong/chatgpt-pilot.git
 cd chatgpt-pilot
-
-# Install dependencies and build all packages
 pnpm install
+```
+
+### 2. Build the packages
+
+```bash
 pnpm build
 ```
 
-### 2. Zero-Config Verification
+### 3. Verify the installation
 
-ChatGPT Pilot features **Zero-Config Auto Discovery** — it automatically locates internal packages (`packages/memory`, `packages/thinkforge`, `packages/skill-hub`, `skills/`) without requiring manual path flags:
+Run the verification suite to ensure all packages compile and tests pass:
 
 ```bash
-# Check raw capabilities across all 4 providers (Legacy Surface)
-pnpm check
+# Run unit tests across all workspace packages (138 tests)
+pnpm test
 
-# Check Hybrid Surface (toolpy + capability_registry)
+# Verify the capability surface
 pnpm check:hybrid
 ```
 
-### 3. Run the Test Suite
+### 4. Connect to an MCP Client
+
+#### Stdio Mode (Claude Desktop, Antigravity, or Local CLI)
+
+Add the server to your client configuration file:
+
+```json
+{
+  "mcpServers": {
+    "chatgpt-pilot": {
+      "command": "node",
+      "args": [
+        "<path-to-repo>/apps/server/dist/index.js",
+        "--tool-surface", "hybrid",
+        "--dangerously-open-machine"
+      ]
+    }
+  }
+}
+```
+
+#### Tunnel Mode (ChatGPT Desktop or Web)
+
+To connect through OpenAI's developer tunnel:
+
+- **Windows (PowerShell)**:
+  ```powershell
+  .\scripts\start-tunnel.ps1
+  ```
+- **Linux / macOS (Bash)**:
+  ```bash
+  ./scripts/start-tunnel.sh
+  ```
+
+To check tunnel health or stop the process:
 
 ```bash
-# Execute full monorepo test suite (138 tests)
+# Check tunnel status
+.\scripts\status-tunnel.ps1   # Windows
+./scripts/status-tunnel.sh    # Linux/macOS
+
+# Stop the tunnel
+.\scripts\stop-tunnel.ps1     # Windows
+./scripts/stop-tunnel.sh      # Linux/macOS
+```
+
+## Core Modules
+
+### 1. System and Machine Execution (`apps/server`)
+
+The core server exposes file and process control tools with safety boundaries:
+
+- **Filesystem Tools**: Atomic reads and edits with SHA-256 preconditions and near-miss diagnostics (`read_file`, `write_file`, `edit_file`, `find_files`, `search_code`).
+- **Process Management**: Supervised background execution with monotonic offsets and explicit termination (`start_process`, `read_process_output`, `process_write`, `process_wait`, `stop_process`).
+- **Verified Git Commits**: `git_commit_verified` executes pre-commit verification checks (`test`, `build`) in a temporary index candidate. If verification fails or files mutate during testing, staging is rolled back and the commit is aborted.
+- **Persistent Python (`toolpy`)**: Stateful IPython kernel providing local variables across tool invocations and direct access to internal capabilities via Python functions.
+
+### 2. Cognitive Frameworks (`packages/thinkforge`)
+
+Analytical scaffolds that help models structure complex decisions before code generation:
+
+- `think_diverge`: Generates alternative hypotheses, implementations, or architectures.
+- `think_converge`: Synthesizes findings, resolves trade-offs, and structures actionable decisions.
+- `think_challenge`: Identifies unstated assumptions, edge cases, and failure modes.
+- `think_reframe`: Reformulates a problem under different operational constraints.
+- `think_perspective_swap`: Evaluates designs from different user or system perspectives.
+- `think_stress_test`: Evaluates architectural resilience against load, concurrency, and partial failure.
+
+### 3. Skills Catalog (`packages/skill-hub`)
+
+A curated repository of 111+ procedural skills located in the `skills/` directory:
+
+- Dynamic discovery via `skills_list`.
+- On-demand procedure retrieval via `skills_get_spec`.
+- Execution through `skills_run`.
+- Procedures cover engineering, performance profiling, security audits, database migrations, and release automation.
+
+### 4. Markdown Memory Engine (`packages/memory`)
+
+A zero-native-dependency memory engine that stores state in structured Markdown files under `.pilot/memory/`:
+
+- **Table of Contents (`TOC.md`)**: Automatically maintained index of all chapters, topics, and timesteps.
+- **Executive Summary (`SUMMARY.md`)**: High-level synthesis of system context, active projects, and architectural patterns.
+- **Chapters (`chapters/`)**:
+  - `01-identity.md`: Developer working preferences and interaction models.
+  - `02-projects.md`: System catalogue, repository paths, and test counts.
+  - `03-architecture.md`: Architectural DNA, loop patterns, and invariants.
+  - `04-timeline.md`: Chronological milestones.
+- **Timesteps (`timesteps/YYYY-MM-DD.md`)**: Time-indexed logs for temporal recall.
+- **Self-Seeding**: Automatically initializes from bundled snapshots in `packages/memory/seed/` when starting in a fresh environment.
+
+## Tool Reference
+
+### System Tools
+
+| Tool | Purpose | Key Parameters |
+|---|---|---|
+| `read_file` | Read bounded file contents with optional line numbers | `path`, `offset`, `limit`, `expected_sha256` |
+| `write_file` | Write complete file contents with collision guard | `path`, `content`, `overwrite`, `expected_sha256` |
+| `edit_file` | Transactionally replace exact text blocks | `path`, `edits`, `expected_sha256` |
+| `find_files` | Search for files by glob pattern | `pattern`, `root`, `max_depth` |
+| `search_code` | Regex search across codebase via ripgrep | `query`, `path`, `case_sensitive` |
+| `shell` | Execute shell command within workspace boundary | `command`, `timeout_ms`, `cwd` |
+| `start_process` | Start a persistent background process | `command`, `cwd` |
+| `read_process_output` | Read stdout/stderr since previous offset | `pid`, `process_id`, `stdout_offset` |
+| `process_write` | Send input to a running process | `pid`, `process_id`, `input` |
+| `process_wait` | Wait for process completion | `pid`, `process_id`, `timeout_ms` |
+| `git_status` | Retrieve structured working tree status | None |
+| `git_diff` | Generate unified diff without shell expansion | `paths`, `cached` |
+| `git_commit_verified` | Commit staged files after passing verification gate | `message`, `paths`, `profile` |
+| `toolpy` | Execute Python code in a stateful IPython session | `code`, `reset_session`, `allow_tools` |
+
+### Memory Tools
+
+| Tool | Purpose | Key Parameters |
+|---|---|---|
+| `memory_toc` | Retrieve the master Table of Contents | None |
+| `memory_summary` | Read the executive summary or chapter overview | `chapter` (optional) |
+| `memory_read_topic` | Read a specific chapter or subtopic section | `topic`, `subtopic` |
+| `memory_recall_time` | Retrieve notes by date or timestep identifier | `timestep` (`YYYY-MM-DD` or `latest`) |
+| `memory_search` | Keyword and semantic search across Markdown files | `query` |
+| `memory_remember` | Append a new entry to the timeline and update index | `title`, `content`, `tags` |
+| `memory_stats` | Report file counts, word counts, and storage paths | None |
+| `memory_recall` | Unified lookup supporting topic, query, or timestep | `query`, `topic`, `timestep` |
+
+### Cognitive and Skill Tools
+
+| Tool | Purpose | Key Parameters |
+|---|---|---|
+| `think_diverge` | Generate multiple alternative approaches | `prompt`, `count` |
+| `think_converge` | Synthesize options into a structured decision | `inputs`, `criteria` |
+| `think_challenge` | Identify unstated assumptions and risks | `thesis`, `context` |
+| `think_reframe` | Restate problem under alternate constraints | `problem`, `constraints` |
+| `think_perspective_swap` | Review scenario from specific stakeholder views | `scenario`, `perspectives` |
+| `think_stress_test` | Simulate failure scenarios against a system plan | `plan`, `failure_modes` |
+| `skills_list` | List available skills from the catalog | `filter`, `limit` |
+| `skills_get_spec` | Retrieve execution instructions for a skill | `name` |
+| `skills_run` | Execute a skill procedure with arguments | `name`, `parameters` |
+
+## Configuration
+
+You can configure ChatGPT Pilot through command-line arguments or environment variables:
+
+| Argument | Environment Variable | Default | Description |
+|---|---|---|---|
+| `--root` | `MCP_WORKSPACE_ROOT` | Current directory | Working directory and safe-mode boundary |
+| `--tool-surface` | `MCP_TOOL_SURFACE` | `legacy` | Tool exposure: `legacy` (raw tools) or `hybrid` (`toolpy` + registry) |
+| `--dangerously-open-machine` | `MCP_ACCESS_MODE` | `workspace` | Permits unrestricted filesystem and shell access |
+| `--policy` | `MCP_POLICY` | `admin` | Security profile: `admin`, `developer`, or `readonly` |
+| `--approval-mode` | `MCP_APPROVAL_MODE` | `mrtr` | Policy enforcement: `mrtr` (require approval) or `deny` |
+| `--audit-file` | `MCP_AUDIT_FILE` | `.pilot/audit.ndjson` | Destination path for the immutable NDJSON audit trail |
+| `--max-timeout` | `MCP_SUPERVISOR_TIMEOUT_MS` | `600000` | Maximum per-tool timeout in milliseconds |
+
+## Security and Governance
+
+ChatGPT Pilot enforces the following security boundaries:
+
+- **Filesystem Isolation**: In workspace mode, all filesystem reads, writes, and searches are confined to `--root`. Symlinks traversing outside the root boundary are rejected.
+- **Process Supervision**: Background processes execute under a supervisor daemon with configurable timeouts, process tree termination, and an automatic circuit breaker.
+- **Pre-commit Integrity**: `git_commit_verified` computes a SHA-256 fingerprint of tracked files before and after verification to detect uncommitted or side-effect mutations.
+- **Audit Stream**: Every tool call, argument set, execution timestamp, and outcome is written to an append-only `.pilot/audit.ndjson` file. Sensitive credentials (tokens, private keys, and `.env` variables) are automatically redacted before logging and transport.
+
+## Development
+
+```bash
+# Run type checking across all workspace packages
+pnpm typecheck
+
+# Run test suite
 pnpm test
+
+# Build all packages
+pnpm build
+
+# Verify build and test gates
+pnpm verify
 ```
 
----
+## License
 
-## 🛠️ CLI & Management Tools
-
-ChatGPT Pilot provides unified CLI commands for controlling tunnels, inspecting capabilities, and querying memory:
-
-### Workstation & Tunnel Management (`pnpm pilot`)
-
-```bash
-# Start background supervised tunnel to ChatGPT
-pnpm pilot up
-
-# Check tunnel and gateway status
-pnpm pilot status
-
-# Stop background tunnel
-pnpm pilot down
-
-# Run system diagnostic and health checks
-pnpm pilot doctor
-```
-
-### Living Memory CLI (`pilot-memory`)
-
-The memory engine can be queried directly from the terminal or scripts:
-
-```bash
-# View Master Table of Contents (สารบัญ)
-node packages/memory/dist/index.js toc
-
-# View executive summaries
-node packages/memory/dist/index.js summary
-
-# Read a specific chapter or subtopic
-node packages/memory/dist/index.js read 02-projects "Loom Agent"
-
-# Recall events from a specific date or period
-node packages/memory/dist/index.js time 2026-09-05
-node packages/memory/dist/index.js time latest
-
-# Search across all memory files
-node packages/memory/dist/index.js search "Jupyter runtime"
-
-# Display memory store metrics
-node packages/memory/dist/index.js stats
-```
-
----
-
-## 🔌 Complete MCP Tools Reference
-
-### 💻 System & Coding Tools (`machine_*`)
-| Tool | Description |
-|---|---|
-| `read_file` | Read complete or sliced file contents with line numbering and SHA-256 preconditions. |
-| `write_file` | Write or overwrite file contents with directory auto-creation and collision safeguards. |
-| `edit_file` | Perform precise string/block replacements with near-miss diagnostics. |
-| `find_files` | Search files by pattern or extension with automated dependency directory exclusion. |
-| `search_code` | Ripgrep-powered fast text and regex search with fallback scanning. |
-| `shell` | Execute shell commands in workspace or unrestricted mode with bounded UTF-8 output. |
-| `start_process` | Spawn background processes with dedicated PID and monotonic offset tracking. |
-| `read_process_output` | Stream incremental stdout/stderr output from managed processes. |
-| `process_write` | Send input to stdin of a live background process. |
-| `process_wait` | Wait for process exit with timeout and exit code capture. |
-| `git_status` | Retrieve structured Git working tree status. |
-| `git_diff` | Generate unified diffs without shell interpolation. |
-| `git_commit_verified` | Run verification gates (build/test) and commit only upon successful check. |
-| `toolpy` | Stateful Python execution sandbox with access to internal capability functions. |
-
-### 💾 Living Memory Tools (`memory_*`)
-| Tool | Description |
-|---|---|
-| `memory_toc` | Retrieve the Master Table of Contents listing all chapters, subtopics, and timesteps. |
-| `memory_summary` | Read executive summaries of the whole system or a specific chapter. |
-| `memory_read_topic` | Read a full chapter or extract a specific heading/subtopic. |
-| `memory_recall_time` | Temporal recall of memories indexed by date (`2026-09-05`), month, or `latest`. |
-| `memory_search` | Full-text keyword and concept search across all memory files. |
-| `memory_remember` | Append a new memory note, milestone, or decision to the timeline and rebuild index. |
-| `memory_stats` | Inspect memory metrics (chapters count, timesteps count, words, bytes, storage path). |
-| `memory_recall` | Unified recall helper dispatching query, topic, or timestep queries. |
-
-### 🧠 Cognitive & Reasoning Tools (`think_*`)
-| Tool | Description |
-|---|---|
-| `think_diverge` | Generate multiple distinct angles, options, and divergent possibilities. |
-| `think_converge` | Synthesize disparate concepts, prioritize options, and extract actionable conclusions. |
-| `think_challenge` | Critically question assumptions, identify flaws, and simulate edge cases. |
-| `think_reframe` | Reframe a problem statement across different perspectives and constraints. |
-| `think_perspective_swap` | Analyze a scenario through different personas or stakeholder views. |
-| `think_stress_test` | Subject an architecture or plan to extreme scale, failure modes, and stress. |
-
-### 📚 Skills Engine Tools (`skills_*`)
-| Tool | Description |
-|---|---|
-| `skills_list` | List all available procedures from the 111+ curated agent skills catalog. |
-| `skills_get_spec` | Retrieve the detailed workflow specification and instructions for a skill. |
-| `skills_run` | Execute a curated skill procedure against the current context. |
-
----
-
-## 🛡️ Security & Governance
-
-- **Workspace Boundary Enforcement**: Safe mode restricts shell commands and file mutations strictly within the workspace root.
-- **Supervisor Circuit Breaker**: Background MCP workers are health-probed and automatically restarted upon crash or hang.
-- **Audit Logging**: Every tool invocation and file mutation is immutably recorded in `.pilot/audit.ndjson`.
-- **Precondition Verification**: File edits require read hash validation to avoid clobbering concurrent modifications.
-
----
-
-## 📄 License
-
-MIT © [JonusNattapong](https://github.com/JonusNattapong)
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
