@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { StdioMcpAdapter } from './stdio-mcp-adapter.js';
+
+const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const fixtureSource = `
 import { McpServer } from '@modelcontextprotocol/server';
@@ -26,13 +29,13 @@ void serveStdio(serverFactory);
 `;
 
 test('stdio MCP adapter discovers, invokes, normalizes JSON, and surfaces tool errors', async () => {
-  const root = await mkdtemp(path.join(process.cwd(), '.tmp-stdio-provider-'));
+  const root = await mkdtemp(path.join(serverDir, '.tmp-stdio-provider-'));
   const fixture = path.join(root, 'fixture.mjs');
   await writeFile(fixture, fixtureSource, 'utf8');
   const adapter = new StdioMcpAdapter({
     command: process.execPath,
     args: [fixture],
-    cwd: process.cwd(),
+    cwd: serverDir,
     env: { ...process.env } as Record<string, string>,
     timeoutMs: 10_000,
   });
