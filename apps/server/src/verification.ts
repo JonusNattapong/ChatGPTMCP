@@ -120,7 +120,7 @@ async function pythonCommands(cwd: string, profile: VerificationProfile): Promis
   return list;
 }
 
-async function detectCommands(cwd: string, profile: VerificationProfile): Promise<{ projectType: string; commands: VerificationCommand[] }> {
+export async function detectCommands(cwd: string, profile: VerificationProfile): Promise<{ projectType: string; commands: VerificationCommand[] }> {
   const packageFile = path.join(cwd, 'package.json');
   if (existsSync(packageFile)) {
     const pkg = JSON.parse(await readFile(packageFile, 'utf8')) as { scripts?: Record<string, string> };

@@ -6,7 +6,7 @@ import test from 'node:test';
 import { ToolError } from './errors.js';
 import { gitAdd, gitLog, gitStatus } from './git-tools.js';
 import { runShellCommand } from './shell-tools.js';
-import { gitCommitVerified, verifyChanges } from './verification.js';
+import { detectCommands, gitCommitVerified, verifyChanges } from './verification.js';
 
 async function withRoot(prefix: string, body: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), prefix));
@@ -130,14 +130,13 @@ test('verified commit rolls staging back if commit itself is rejected', async (t
 test('verification detects Python projects and parses diagnostics', async () => {
   await withRoot('machine-verify-python-', async (root) => {
     await writeFile(path.join(root, 'pyproject.toml'), '[tool.ruff]\nline-length = 88\n');
-    const access = { root, unrestricted: false };
-    const fast = await verifyChanges({ ...access, profile: 'fast', timeoutMs: 10_000 });
+    const fast = await detectCommands(root, 'fast');
     assert.equal(fast.projectType, 'python');
-    assert.deepEqual(fast.checks.map((c) => c.name), ['ruff check']);
+    assert.deepEqual(fast.commands.map((c) => c.name), ['ruff check']);
 
-    const normal = await verifyChanges({ ...access, profile: 'normal', timeoutMs: 10_000 });
+    const normal = await detectCommands(root, 'normal');
     assert.equal(normal.projectType, 'python');
-    assert.deepEqual(normal.checks.map((c) => c.name), ['ruff check', 'python -m pytest']);
+    assert.deepEqual(normal.commands.map((c) => c.name), ['ruff check', 'python -m pytest']);
   });
 
   const { parseDiagnostics } = await import('./verification.js');
