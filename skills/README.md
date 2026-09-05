@@ -1,6 +1,7 @@
-# chatgpt-skills (108 ตัว)
+# chatgpt-skills (138 ตัว)
 
 Sources:
+- https://github.com/sickn33/agentic-awesome-skills — 30 curated skills: Cloud & Infrastructure (8), Mobile (7), Data & ML (7), Security & Auditing (8) (2026-09-06)
 - https://github.com/mattpocock/skills (cloned 2026-09-03, depth 1)
 - https://github.com/blader/humanizer (cloned 2026-09-03, depth 1)
 - https://github.com/obra/superpowers — skills/ ทั้ง 14 ตัว (2026-09-03; frontmatter ผ่านทั้ง 14 ไม่ต้องแก้)
@@ -89,6 +90,18 @@ threejs-animation, threejs-interaction, threejs-loaders, threejs-shaders, threej
 chrome-devtools, chrome-devtools-cli, a11y-debugging, cookie-debugging, debug-optimize-lcp,
 memory-leak-debugging, troubleshooting
 108. gpt-image-2-style-library (freestylefly — GPT-Image2 style library + prompt templates; 6 ไฟล์)
+109-116. Cloud & Infrastructure (sickn33/agentic-awesome-skills — 8 ตัว):
+docker-expert, kubernetes-architect, terraform-specialist, cloud-architect,
+aws-skills, gcp-cloud-run, helm-chart-scaffolding, gitops-workflow
+117-123. Mobile Development (sickn33/agentic-awesome-skills — 7 ตัว):
+react-native-skills, react-native-architecture, flutter-expert, ios-developer,
+android-dev, expo-dev-client, expo-deployment
+124-130. Data Engineering & Machine Learning (sickn33/agentic-awesome-skills — 7 ตัว):
+data-engineer, data-engineering-data-pipeline, dbt-transformation-patterns,
+ml-engineer, machine-learning-ops-ml-pipeline, hugging-face-model-trainer, hugging-face-datasets
+131-138. Security & Penetration Testing (sickn33/agentic-awesome-skills — 8 ตัว):
+security-auditor, api-security-testing, threat-modeling-expert, container-security-hardening,
+pentest-checklist, sqlmap-database-pentesting, idor-testing, database-security
 
 ## ลำดับติดตั้งแนะนำ
 ```text

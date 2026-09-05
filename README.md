@@ -1,4 +1,4 @@
-﻿# ChatGPT Pilot
+# ChatGPT Pilot
 
 [![CI/CD](https://github.com/JonusNattapong/chatgpt-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/JonusNattapong/chatgpt-pilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -145,7 +145,7 @@ Analytical scaffolds that help models structure complex decisions before code ge
 
 ### 3. Skills Catalog (`packages/skill-hub`)
 
-A curated repository of 111+ procedural skills located in the `skills/` directory:
+A curated repository of 139+ procedural skills located in the `skills/` directory:
 
 - Dynamic discovery via `skills_list`.
 - On-demand procedure retrieval via `skills_get_spec`.

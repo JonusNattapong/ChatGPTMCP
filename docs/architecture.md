@@ -41,7 +41,7 @@ ChatGPT Pilot functions as a unified gateway and capability fabric bridging AI c
 - Enables models to test hypotheses, find blind spots, and optimize architectures before code generation.
 
 ### 2.3 Dynamic Skills Engine (`packages/skill-hub` + `skills/`)
-- Discovers, validates, and executes procedures from the 111+ skills repository.
+- Discovers, validates, and executes procedures from the 139+ skills repository.
 - Skill metadata is exposed via lightweight descriptors (`skills_list`), with full procedures fetched on demand (`skills_get_spec`, `skills_run`).
 
 ### 2.4 Living Memory Book Engine (`packages/memory`)

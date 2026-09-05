@@ -6,7 +6,7 @@ Skill Hub is a lightweight, high-performance gateway that indexes, searches, and
 
 ## Key Features
 
-- **111+ Curated Skills**: Covers software engineering, TDD, systematic debugging, code review, Figma/UI design, technical writing, DevOps, and product strategy.
+- **139+ Curated Skills**: Covers software engineering, cloud infrastructure (Docker, K8s, Terraform), mobile (React Native, Flutter, iOS, Android), data engineering & ML, security auditing, TDD, systematic debugging, and product strategy.
 - **Lazy Procedure Loading**: Advertises concise descriptors (`skills_list`) during initialization, fetching deep step-by-step instructions (`skills_get_spec`) only when activated.
 - **Zero-Config Discovery**: Automatically discovers the root `skills/` directory when running inside `chatgpt-pilot`.
 

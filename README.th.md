@@ -1,4 +1,4 @@
-﻿# ChatGPT Pilot (คู่มือภาษาไทย)
+# ChatGPT Pilot (คู่มือภาษาไทย)
 
 [![CI/CD](https://github.com/JonusNattapong/chatgpt-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/JonusNattapong/chatgpt-pilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -12,7 +12,7 @@ ChatGPT Pilot เป็นเซิร์ฟเวอร์ Model Context Protoc
 
 - **การทำงานกับระบบเครื่อง (`apps/server`)**: จัดการไฟล์แบบกำหนดขอบเขต, ควบคุมโปรเซสเบื้องหลัง, ตรวจสอบความถูกต้องของ Git ก่อนคอมมิต, และรันโค้ด Python แบบ Stateful ผ่าน `toolpy`
 - **เครื่องมือช่วยคิดและวิเคราะห์ (`packages/thinkforge`)**: เครื่องมือสำหรับวิเคราะห์ปัญหา, ท้าทายสมมติฐาน, จัดกรอบมุมมองใหม่, และจำลองสภาวะขัดข้องของระบบ
-- **คลังกระบวนการทำงาน (`packages/skill-hub`)**: ค้นหาและเรียกใช้งานเวิร์กโฟลว์เฉพาะทางกว่า 111 รายการจากโฟลเดอร์ `skills/`
+- **คลังกระบวนการทำงาน (`packages/skill-hub`)**: ค้นหาและเรียกใช้งานเวิร์กโฟลว์เฉพาะทางกว่า 139 รายการจากโฟลเดอร์ `skills/`
 - **ระบบจัดเก็บหน่วยความจำ Markdown (`packages/memory`)**: จัดเก็บข้อมูล, บันทึกการตัดสินใจทางสถาปัตยกรรม, และไทม์ไลน์ในรูปแบบไฟล์ Markdown มาตรฐาน โดยไม่พึ่งพาฐานข้อมูลไบนารีหรือ Native C++
 
 ## สถาปัตยกรรมระบบ
@@ -143,7 +143,7 @@ pnpm check:hybrid
 
 ### 3. คลังกระบวนการทำงาน (`packages/skill-hub`)
 
-ศูนย์รวมขั้นตอนการทำงานสำเร็จรูปกว่า 111 รายการในไดเรกทอรี `skills/`:
+ศูนย์รวมขั้นตอนการทำงานสำเร็จรูปกว่า 139 รายการในไดเรกทอรี `skills/`:
 
 - ค้นหารายการเวิร์กโฟลว์ผ่าน `skills_list`
 - ดึงคำแนะนำขั้นตอนการทำงานอย่างละเอียดผ่าน `skills_get_spec`
