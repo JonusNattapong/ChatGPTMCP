@@ -149,11 +149,13 @@ Analytical scaffolds that help models structure complex decisions before code ge
 
 ### 3. Skills Catalog (`packages/skill-hub`)
 
-A curated repository of 139+ procedural skills located in the `skills/` directory:
+A curated repository of 249 currently indexed procedural skills located in the `skills/` directory:
 
-- Dynamic discovery via `skills_list`.
-- On-demand procedure retrieval via `skills_get_spec`.
-- Execution through `skills_run`.
+- Catalog discovery via `skills_skill_list` and `skills_skill_search`.
+- Task ranking and intent routing via `skills_skill_resolve` and `skills_skill_route`.
+- Ordered workflow composition via `skills_skill_compose`.
+- On-demand procedure retrieval via `skills_skill_read`.
+- Local aggregate learning via `skills_skill_feedback` and `skills_skill_insights` (task/prompt text is not persisted).
 - Procedures cover engineering, performance profiling, security audits, database migrations, and release automation.
 
 ### 4. Markdown Memory Engine (`packages/memory`)
@@ -214,9 +216,16 @@ A zero-native-dependency memory engine that stores state in structured Markdown 
 | `think_reframe` | Restate problem under alternate constraints | `problem`, `constraints` |
 | `think_perspective_swap` | Review scenario from specific stakeholder views | `scenario`, `perspectives` |
 | `think_stress_test` | Simulate failure scenarios against a system plan | `plan`, `failure_modes` |
-| `skills_list` | List available skills from the catalog | `filter`, `limit` |
-| `skills_get_spec` | Retrieve execution instructions for a skill | `name` |
-| `skills_run` | Execute a skill procedure with arguments | `name`, `parameters` |
+| `skills_skill_list` | List installed skills | `offset`, `limit` |
+| `skills_skill_search` | Literal search over skill name/description | `query`, `limit` |
+| `skills_skill_resolve` | Rank and deduplicate skills for a task | `task`, `limit` |
+| `skills_skill_route` | Classify task intent and return ranked candidates | `task`, `limit` |
+| `skills_skill_compose` | Build an ordered workflow of relevant skills | `task`, `max_skills` |
+| `skills_skill_feedback` | Record aggregate local outcome telemetry | `skill`, `outcome` |
+| `skills_skill_insights` | Return taxonomy, duplicate groups, core coverage, and success stats | None |
+| `skills_skill_read` | Read `SKILL.md` or a referenced file inside one skill | `name`, `path` |
+| `skills_skill_sync` | Rescan the workspace skill catalog | None |
+| `skills_skill_stats` | Return catalog count, roots, and last sync | None |
 
 ## Configuration
 

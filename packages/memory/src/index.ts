@@ -159,6 +159,72 @@ server.tool(
   }
 );
 
+// 8. Drawer List (แสดงรายการลิ้นชักความจำเฉพาะกิจ)
+server.tool(
+  'memory_drawer_list',
+  'List all specialized memory drawers (compartments/ลิ้นชักความจำ) and their items, or inspect a specific drawer.',
+  {
+    drawer: z.string().optional().describe('Optional drawer name to filter (e.g. cheatsheets, lessons, drafts, projects)'),
+  },
+  async ({ drawer }) => {
+    const drawers = book.listDrawers(drawer);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(drawers, null, 2) }],
+    };
+  }
+);
+
+// 9. Drawer Get (ดึงของจากลิ้นชักความจำ)
+server.tool(
+  'memory_drawer_get',
+  'Retrieve the full content of a specific memory item stored in a drawer (e.g. drawer="cheatsheets", item="docker").',
+  {
+    drawer: z.string().describe('Drawer name (e.g. cheatsheets, lessons, drafts, projects)'),
+    item: z.string().describe('Item identifier or name inside the drawer (e.g. docker, git, ci-cross-platform)'),
+  },
+  async ({ drawer, item }) => {
+    const content = book.readDrawerItem(drawer, item);
+    return {
+      content: [{ type: 'text', text: content }],
+    };
+  }
+);
+
+// 10. Drawer Put (เก็บของเข้าลิ้นชักความจำ)
+server.tool(
+  'memory_drawer_put',
+  'Store or update a specialized memory item inside a drawer (e.g. storing a cheatsheet, lesson, project note, or draft). Automatically rebuilds the Table of Contents.',
+  {
+    drawer: z.string().describe('Target drawer name (e.g. cheatsheets, lessons, drafts, projects)'),
+    item: z.string().describe('Item identifier or filename (slug or name)'),
+    content: z.string().describe('Markdown content to store in the drawer'),
+    title: z.string().optional().describe('Human-readable title for this memory item'),
+    tags: z.array(z.string()).optional().describe('Tags for indexing and discovery'),
+  },
+  async ({ drawer, item, content, title, tags }) => {
+    const result = book.putDrawerItem(drawer, item, content, { title, tags });
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+// 11. Drawer Delete (ลบของออกจากลิ้นชักความจำ)
+server.tool(
+  'memory_drawer_delete',
+  'Delete a specific item from a drawer.',
+  {
+    drawer: z.string().describe('Drawer name'),
+    item: z.string().describe('Item name to delete'),
+  },
+  async ({ drawer, item }) => {
+    const result = book.deleteDrawerItem(drawer, item);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
 async function startStdioServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -190,9 +256,20 @@ if (isMainModule()) {
     console.log(JSON.stringify(book.search(process.argv[3] || '', 10), null, 2));
   } else if (command === 'stats') {
     console.log(JSON.stringify(book.stats(), null, 2));
+  } else if (command === 'drawer') {
+    const sub = process.argv[3];
+    if (sub === 'list' || !sub) {
+      console.log(JSON.stringify(book.listDrawers(process.argv[4]), null, 2));
+    } else if (sub === 'get') {
+      console.log(book.readDrawerItem(process.argv[4] || '', process.argv[5] || ''));
+    } else if (sub === 'put') {
+      console.log(JSON.stringify(book.putDrawerItem(process.argv[4] || '', process.argv[5] || '', process.argv[6] || ''), null, 2));
+    } else if (sub === 'del' || sub === 'delete') {
+      console.log(JSON.stringify(book.deleteDrawerItem(process.argv[4] || '', process.argv[5] || ''), null, 2));
+    }
   } else {
     console.log(`Unknown command: ${command}`);
-    console.log(`Usage: pilot-memory [mcp | toc | summary | read | time | search | stats]`);
+    console.log(`Usage: pilot-memory [mcp | toc | summary | read | time | search | stats | drawer]`);
   }
 }
 
