@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ✨ Features
 
+- **skills**: add 30 curated skills across Cloud, Mobile, Data/ML, and Security (`b0d1d4b`)
+
+### 🧹 Chores & Maintenance
+
+- **changelog**: auto-update CHANGELOG.md [skip ci] (`1f02ba9`)
+
+## [1.0.0] - 2026-09-05
+
+### ✨ Features
+
 - **memory**: implement pure Markdown Living Memory Book engine (`927773c`)
 - **storage**: implement unified .pilot storage layout with legacy fallbacks (`13e73a1`)
 - consolidate ecosystem into ChatGPT Pilot monorepo (#2) (`bbac202`)
